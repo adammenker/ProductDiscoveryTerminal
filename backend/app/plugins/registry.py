@@ -7,6 +7,7 @@ from app.plugins.analyzers.review.plugin import ReviewAnalyzer
 from app.plugins.analyzers.risk.plugin import RiskAnalyzer
 from app.plugins.analyzers.supplier.plugin import SupplierAnalyzer
 from app.plugins.ingestion.alibaba_mock.plugin import AlibabaMockPlugin
+from app.plugins.ingestion.alibaba_open_api.plugin import AlibabaOpenApiPlugin
 from app.plugins.ingestion.amazon_mock.plugin import AmazonMockPlugin
 from app.plugins.ingestion.etsy_api.plugin import EtsyApiPlugin
 from app.plugins.ingestion.google_trends_mock.plugin import GoogleTrendsMockPlugin
@@ -21,6 +22,7 @@ INGESTION_PLUGINS: list[IngestionPlugin] = [
     RedditMockPlugin(),
     GoogleTrendsMockPlugin(),
     EtsyApiPlugin(),
+    AlibabaOpenApiPlugin(),
 ]
 
 ANALYZER_PLUGINS: list[AnalyzerPlugin] = [

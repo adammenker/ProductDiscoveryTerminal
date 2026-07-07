@@ -41,7 +41,15 @@ class ManualCsvPlugin:
                 title = row.get("title") or "untitled product"
                 metrics = {
                     key: _parse_number(row.get(key))
-                    for key in ("price", "review_count", "rating", "unit_cost", "moq")
+                    for key in (
+                        "price",
+                        "review_count",
+                        "rating",
+                        "unit_cost",
+                        "moq",
+                        "lead_time_days",
+                        "shipping_estimate",
+                    )
                     if row.get(key)
                 }
                 observations.append(
@@ -58,6 +66,8 @@ class ManualCsvPlugin:
                         metadata={
                             "product_name": title.strip().lower(),
                             "category": row.get("category") or None,
+                            "supplier_name": row.get("supplier_name") or None,
+                            "country": row.get("country") or None,
                             "row_index": index,
                         },
                     )
@@ -70,4 +80,3 @@ def _parse_number(value: str | None) -> float | int | None:
         return None
     number = float(value)
     return int(number) if number.is_integer() else number
-

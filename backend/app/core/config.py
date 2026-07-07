@@ -23,6 +23,22 @@ class Settings(BaseSettings):
     etsy_shared_secret: str | None = None
     etsy_api_base_url: str = "https://openapi.etsy.com/v3/application"
     etsy_request_timeout_seconds: float = 15.0
+    alibaba_api_enabled: bool = False
+    alibaba_app_key: str | None = None
+    alibaba_app_secret: str | None = None
+    alibaba_access_token: str | None = None
+    alibaba_product_search_url: str | None = None
+    alibaba_request_timeout_seconds: float = 20.0
+    cost_ceiling_marketplace_fee_rate: float = 0.15
+    cost_ceiling_fulfillment_fee_rate: float = 0.13
+    cost_ceiling_fulfillment_fee_floor: float = 3.25
+    cost_ceiling_supplier_freight_fallback_per_unit: float = 1.0
+    cost_ceiling_packaging_cost_per_unit: float = 0.65
+    cost_ceiling_inbound_cost_per_unit: float = 0.75
+    cost_ceiling_storage_cost_per_unit: float = 0.35
+    cost_ceiling_return_allowance_rate: float = 0.04
+    cost_ceiling_ad_allowance_rate: float = 0.12
+    cost_ceiling_target_profit_rate: float = 0.20
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

@@ -30,3 +30,20 @@ export function dateTime(value: string | null | undefined) {
   }).format(new Date(value));
 }
 
+export function currency(value: number | string | null | undefined, code = "USD") {
+  if (value === null || value === undefined || value === "") return "--";
+  const number = typeof value === "number" ? value : Number(value);
+  if (Number.isNaN(number)) return "--";
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: code,
+    maximumFractionDigits: 2
+  }).format(number);
+}
+
+export function percent(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === "") return "--";
+  const number = typeof value === "number" ? value : Number(value);
+  if (Number.isNaN(number)) return "--";
+  return `${number.toFixed(1)}%`;
+}

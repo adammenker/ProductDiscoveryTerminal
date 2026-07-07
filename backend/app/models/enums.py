@@ -53,6 +53,7 @@ class InsightType(StrEnum):
     RISK_FLAG = "risk_flag"
     OPPORTUNITY_THESIS = "opportunity_thesis"
     COMPETITION_SUMMARY = "competition_summary"
+    COST_CEILING = "cost_ceiling"
 
 
 class Recommendation(StrEnum):
@@ -61,4 +62,3 @@ class Recommendation(StrEnum):
     SKIP = "skip"
     STRONG_OPPORTUNITY = "strong_opportunity"
     NEEDS_MORE_DATA = "needs_more_data"
-

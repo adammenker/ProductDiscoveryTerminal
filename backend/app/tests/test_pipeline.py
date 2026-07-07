@@ -21,6 +21,7 @@ def test_pipeline_happy_path_and_observation_deduplication(db_session: Session) 
     assert second.products_updated == 0
     assert second.scores_updated == 0
     assert "etsy_api" not in {run.plugin_name for run in first.plugin_runs}
+    assert "alibaba_open_api" not in {run.plugin_name for run in first.plugin_runs}
 
 
 def test_pipeline_captures_plugin_failure(db_session: Session, monkeypatch) -> None:  # type: ignore[no-untyped-def]

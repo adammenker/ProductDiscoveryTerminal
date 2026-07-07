@@ -9,7 +9,7 @@ import { RecordTable } from "@/components/RecordTable";
 import { ScoreBadge } from "@/components/ScoreBadge";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { api } from "@/lib/api";
-import { dateTime, titleCase } from "@/lib/format";
+import { currency, dateTime, percent, titleCase } from "@/lib/format";
 
 export default function ProductDetailPage() {
   const params = useParams<{ id: string }>();
@@ -24,6 +24,9 @@ export default function ProductDetailPage() {
 
   const data = product.data;
   const score = data.latest_score;
+  const costCeilingModel = data.cost_models.find((model) => getCostCeiling(model));
+  const costCeiling = getCostCeiling(costCeilingModel);
+  const costCurrency = String(costCeilingModel?.currency ?? "USD");
 
   return (
     <div className="space-y-6">
@@ -63,6 +66,22 @@ export default function ProductDetailPage() {
       )}
 
       <section className="space-y-3">
+        <SectionTitle title="Cost Ceiling" />
+        {costCeiling ? (
+          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+            <CostMetric label="Max Landed" value={currency(costCeiling.max_landed_cost, costCurrency)} tone="green" />
+            <CostMetric label="Supplier Landed" value={currency(costCeiling.supplier_landed_cost, costCurrency)} />
+            <CostMetric label="Safety" value={currency(costCeiling.margin_of_safety, costCurrency)} tone={costCeiling.decision === "quote_above_ceiling" ? "rose" : "green"} />
+            <CostMetric label="Target Profit" value={currency(costCeiling.target_profit, costCurrency)} />
+            <CostMetric label="Amazon Fees" value={currency(costCeiling.amazon_fees, costCurrency)} />
+            <CostMetric label="Profit Margin" value={percent(costCeiling.estimated_profit_margin_after_allowances)} />
+          </div>
+        ) : (
+          <EmptyState label="No cost ceiling available" />
+        )}
+      </section>
+
+      <section className="space-y-3">
         <SectionTitle title="Signals" />
         <div className="grid gap-4 xl:grid-cols-2">
           <RecordTable rows={data.market_signals} columns={["source", "signal_type", "value", "unit", "created_at"]} />
@@ -82,8 +101,10 @@ export default function ProductDetailPage() {
               "model_name",
               "selling_price",
               "unit_cost",
+              "freight_cost_per_unit",
               "fulfillment_cost_per_unit",
               "marketplace_fee_per_unit",
+              "storage_cost_per_unit",
               "estimated_net_margin"
             ]}
           />
@@ -132,3 +153,39 @@ function SectionTitle({ title }: { title: string }) {
   return <h2 className="font-mono text-xs uppercase tracking-[0.18em] text-terminal-muted">{title}</h2>;
 }
 
+type CostCeiling = {
+  max_landed_cost?: number | string | null;
+  supplier_landed_cost?: number | string | null;
+  margin_of_safety?: number | string | null;
+  target_profit?: number | string | null;
+  amazon_fees?: number | string | null;
+  estimated_profit_margin_after_allowances?: number | string | null;
+  decision?: string | null;
+};
+
+function getCostCeiling(model: Record<string, unknown> | undefined): CostCeiling | null {
+  const assumptions = model?.assumptions;
+  if (!assumptions || typeof assumptions !== "object" || Array.isArray(assumptions)) return null;
+  const value = (assumptions as Record<string, unknown>).cost_ceiling;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as CostCeiling;
+}
+
+function CostMetric({
+  label,
+  value,
+  tone = "neutral"
+}: {
+  label: string;
+  value: string;
+  tone?: "neutral" | "green" | "rose";
+}) {
+  const toneClass =
+    tone === "green" ? "text-terminal-green" : tone === "rose" ? "text-terminal-rose" : "text-terminal-ink";
+  return (
+    <div className="border border-terminal-line bg-terminal-panel/80 p-3">
+      <div className="font-mono text-xs uppercase text-terminal-muted">{label}</div>
+      <div className={`mt-2 font-mono text-lg tabular-nums ${toneClass}`}>{value}</div>
+    </div>
+  );
+}

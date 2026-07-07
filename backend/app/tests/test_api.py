@@ -28,7 +28,9 @@ def test_ingestion_products_opportunities_and_detail(client: TestClient) -> None
     assert detail["product"]["canonical_name"] == "facial ice roller"
     assert detail["latest_score"]["final_score"] > 70
     assert detail["recent_observations"]
+    cost_ceiling = detail["cost_models"][0]["assumptions"]["cost_ceiling"]
+    assert cost_ceiling["max_landed_cost"] > 0
+    assert cost_ceiling["decision"] == "quote_at_or_below_ceiling"
 
     runs = client.get("/plugin-runs").json()
     assert runs
-

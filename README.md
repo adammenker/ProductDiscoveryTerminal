@@ -58,6 +58,55 @@ curl -X POST http://localhost:8000/ingestion/run \
 
 The default pipeline still runs only mock/manual plugins so local development remains stable.
 
+### Alibaba.com Open API
+
+The `alibaba_open_api` ingestion plugin is installed but disabled by default while Alibaba app/API access is pending.
+
+Required local values:
+
+```bash
+ALIBABA_API_ENABLED=false
+ALIBABA_APP_KEY=your_alibaba_app_key
+ALIBABA_APP_SECRET=your_alibaba_app_secret
+ALIBABA_ACCESS_TOKEN=your_alibaba_access_token
+ALIBABA_PRODUCT_SEARCH_URL=
+```
+
+After Alibaba approval confirms the product/supplier search API route, fill `ALIBABA_PRODUCT_SEARCH_URL`, set `ALIBABA_API_ENABLED=true`, restart the backend, and run the plugin explicitly:
+
+```bash
+curl -X POST http://localhost:8000/ingestion/run \
+  -H 'Content-Type: application/json' \
+  -d '{"plugins":["alibaba_open_api"],"query":{"query":"ice roller","limit":25}}'
+```
+
+For now, `alibaba_mock` remains the default supplier plugin so the pipeline keeps working without live supplier credentials.
+
+### Cost Ceiling Engine
+
+The economics analyzer now calculates the max landed cost per product:
+
+```text
+max_landed_cost =
+  selling_price
+  - amazon_fees
+  - inbound_cost_per_unit
+  - storage_estimate
+  - return_allowance
+  - ad_allowance
+  - target_profit
+```
+
+For now `amazon_fees` are estimated from configurable defaults. When Amazon SP-API is approved, a Product Fees ingestion/analyzer plugin can replace those assumptions with live fee estimates without changing the cost-ceiling formula.
+
+Manual supplier quotes can flow through `manual_csv` using these optional columns:
+
+```text
+unit_cost, moq, lead_time_days, shipping_estimate, supplier_name, country
+```
+
+The product detail page shows max landed cost, supplier landed cost, Amazon fees, target profit, and margin of safety.
+
 ## Backend Development
 
 ```bash
@@ -108,7 +157,7 @@ Core services should only know about observations, products, signals, insights, 
 
 - FastAPI backend with SQLAlchemy models and Alembic migration.
 - Postgres through Docker Compose, SQLite-compatible local tests.
-- Manual CSV, Amazon mock, Alibaba mock, Reddit mock, Google Trends mock, and opt-in Etsy API ingestion plugins.
+- Manual CSV, Amazon mock, Alibaba mock, Reddit mock, Google Trends mock, and opt-in Etsy/Alibaba API ingestion plugins.
 - Demand, competition, supplier, economics, risk, and review analyzer plugins.
 - Content-hash observation deduplication.
 - Simple alias-based product normalization.
