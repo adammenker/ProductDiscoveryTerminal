@@ -108,16 +108,17 @@ curl -X POST http://localhost:8000/ingestion/run \
   -d '{"plugins":["amazon_sp_api"],"query":{"query":"ice roller","limit":10}}'
 ```
 
-Run the minimal connectivity test from the backend directory:
+Run the minimal connectivity test through the backend container:
 
 ```bash
-set -a
-source ../.env
-set +a
-AMAZON_SP_API_CONNECTIVITY_TEST=1 python3 -m pytest app/tests/test_amazon_sp_api_connectivity.py -q
+docker compose exec -T \
+  -e AMAZON_SP_API_CONNECTIVITY_TEST=1 \
+  backend python -m pytest app/tests/test_amazon_sp_api_connectivity.py -q
 ```
 
-The connectivity test exchanges the refresh token for an LWA access token, then calls `GET /sellers/v1/marketplaceParticipations`. It does not create, update, or ingest product records.
+The connectivity test exchanges the configured refresh token and performs a read-only
+competitive-pricing lookup, which requires the Pricing role. It does not create,
+update, or ingest product records.
 
 The shared Amazon client already includes a Product Fees helper, so the next Amazon module can replace heuristic fee assumptions with SP-API fee estimates.
 

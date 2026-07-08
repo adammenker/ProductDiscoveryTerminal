@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -63,6 +64,14 @@ class AmazonSpApiClient:
     def get_marketplace_participations(self) -> dict[str, Any]:
         return self.get("/sellers/v1/marketplaceParticipations")
 
+    def get_competitive_pricing_for_asin(self, asin: str) -> dict[str, Any]:
+        params = {
+            "MarketplaceId": self.settings.amazon_marketplace_id,
+            "Asins": asin,
+            "ItemType": "Asin",
+        }
+        return self.get("/products/pricing/v0/competitivePrice", params=params)
+
     def get_fees_estimate_for_asin(self, asin: str, listing_price: float) -> dict[str, Any]:
         body = {
             "FeesEstimateRequest": {
@@ -105,6 +114,7 @@ class AmazonSpApiClient:
             "Accept": "application/json",
             "User-Agent": self.settings.amazon_user_agent,
             "x-amz-access-token": self.get_access_token(),
+            "x-amz-date": datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"),
         }
 
     def _endpoint(self) -> str:

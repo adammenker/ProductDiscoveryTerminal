@@ -22,8 +22,11 @@ def test_amazon_sp_api_client_exchanges_refresh_token_and_calls_catalog() -> Non
                 json={"access_token": "Atza|test-access-token", "token_type": "bearer"},
             )
         assert request.headers["x-amz-access-token"] == "Atza|test-access-token"
+        assert request.headers["x-amz-date"]
         if request.url.path == "/sellers/v1/marketplaceParticipations":
             return httpx.Response(200, json={"payload": []})
+        if request.url.path == "/products/pricing/v0/competitivePrice":
+            return httpx.Response(200, json={"payload": [{"ASIN": "B000TEST01"}]})
         return httpx.Response(
             200,
             json={"items": [{"asin": "B000TEST01", "summaries": [{"itemName": "Ice Roller"}]}]},
@@ -46,10 +49,13 @@ def test_amazon_sp_api_client_exchanges_refresh_token_and_calls_catalog() -> Non
     assert payload["items"][0]["asin"] == "B000TEST01"
     marketplace_payload = client.get_marketplace_participations()
     assert marketplace_payload == {"payload": []}
+    pricing_payload = client.get_competitive_pricing_for_asin("B000TEST01")
+    assert pricing_payload == {"payload": [{"ASIN": "B000TEST01"}]}
     assert seen == [
         "https://api.amazon.com/auth/o2/token",
         "https://sandbox.sellingpartnerapi-na.amazon.com/catalog/2022-04-01/items?marketplaceIds=ATVPDKIKX0DER&keywords=ice+roller&pageSize=10&includedData=summaries%2Cimages%2CsalesRanks",
         "https://sandbox.sellingpartnerapi-na.amazon.com/sellers/v1/marketplaceParticipations",
+        "https://sandbox.sellingpartnerapi-na.amazon.com/products/pricing/v0/competitivePrice?MarketplaceId=ATVPDKIKX0DER&Asins=B000TEST01&ItemType=Asin",
     ]
 
 

@@ -29,7 +29,8 @@ def test_amazon_sp_api_connectivity() -> None:
 
     with AmazonSpApiClient(settings) as client:
         access_token = client.get_access_token()
-        payload = client.get_marketplace_participations()
+        payload = client.get_competitive_pricing_for_asin("B0BSHF7WHW")
 
     assert access_token.startswith("Atza|")
     assert isinstance(payload, dict)
+    assert isinstance(payload.get("payload"), list)
