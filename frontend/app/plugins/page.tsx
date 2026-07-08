@@ -33,7 +33,22 @@ export default function PluginsPage() {
   );
 }
 
-function PluginGroup({ title, plugins }: { title: string; plugins: Array<{ name: string; version: string; description: string | null; supports: string[] }> }) {
+function PluginGroup({
+  title,
+  plugins
+}: {
+  title: string;
+  plugins: Array<{
+    name: string;
+    version: string;
+    enabled?: boolean;
+    configured?: boolean | null;
+    environment?: string | null;
+    missing_credentials?: string[];
+    description: string | null;
+    supports: string[];
+  }>;
+}) {
   return (
     <section className="border border-terminal-line bg-terminal-bg">
       <div className="border-b border-terminal-line bg-terminal-panel px-4 py-3 font-mono text-xs uppercase tracking-[0.18em] text-terminal-muted">
@@ -47,9 +62,19 @@ function PluginGroup({ title, plugins }: { title: string; plugins: Array<{ name:
                 <h3 className="font-medium">{plugin.name}</h3>
                 <p className="mt-1 text-sm leading-6 text-terminal-muted">{plugin.description}</p>
               </div>
-              <span className="font-mono text-xs text-terminal-green">{plugin.version}</span>
+              <div className="text-right">
+                <span className="font-mono text-xs text-terminal-green">{plugin.version}</span>
+                {plugin.environment ? (
+                  <div className="mt-1 font-mono text-xs uppercase text-terminal-muted">{plugin.environment}</div>
+                ) : null}
+              </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
+              {plugin.configured === false ? (
+                <span className="border border-terminal-amber/50 px-2 py-1 font-mono text-xs text-terminal-amber">
+                  missing config
+                </span>
+              ) : null}
               {plugin.supports.map((support) => (
                 <span key={support} className="border border-terminal-line px-2 py-1 font-mono text-xs text-terminal-muted">
                   {support}
@@ -62,4 +87,3 @@ function PluginGroup({ title, plugins }: { title: string; plugins: Array<{ name:
     </section>
   );
 }
-

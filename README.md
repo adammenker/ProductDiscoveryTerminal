@@ -8,7 +8,7 @@ The app runs a scheduled-batch style intelligence loop:
 ingestion plugins -> raw observations -> normalization -> analyzer plugins -> scoring -> terminal UI
 ```
 
-The first version uses only manual/mock plugins. There are no real external API calls, no event-driven cloud infrastructure, and no downstream FBA/listing/order automation.
+The default pipeline uses only manual/mock plugins. Real API plugins are opt-in and disabled until credentials are configured. There is no event-driven cloud infrastructure and no downstream FBA/listing/order automation.
 
 ## Run Locally
 
@@ -81,6 +81,80 @@ curl -X POST http://localhost:8000/ingestion/run \
 ```
 
 For now, `alibaba_mock` remains the default supplier plugin so the pipeline keeps working without live supplier credentials.
+
+### Amazon Selling Partner API
+
+The `amazon_sp_api` ingestion plugin is installed but disabled by default. Use the sandbox first with a sandbox refresh token, then switch to production after self-authorizing the production app.
+
+Required local values for sandbox:
+
+```bash
+AMAZON_SP_API_ENABLED=true
+AMAZON_SP_API_ENV=sandbox
+AMAZON_SP_API_ENDPOINT=https://sandbox.sellingpartnerapi-na.amazon.com
+AMAZON_MARKETPLACE_ID=ATVPDKIKX0DER
+AMAZON_LWA_CLIENT_ID=replace_me
+AMAZON_LWA_CLIENT_SECRET=replace_me
+AMAZON_LWA_REFRESH_TOKEN=replace_me
+```
+
+The sandbox endpoint defaults to `https://sandbox.sellingpartnerapi-na.amazon.com` for North America. Production defaults to `https://sellingpartnerapi-na.amazon.com` when `AMAZON_SP_API_ENV=production` and `AMAZON_SP_API_ENDPOINT` is not explicitly set. The backend also accepts the older names `AMAZON_SP_API_ENVIRONMENT` and `AMAZON_REFRESH_TOKEN` for compatibility.
+
+Run the Catalog Items plugin explicitly:
+
+```bash
+curl -X POST http://localhost:8000/ingestion/run \
+  -H 'Content-Type: application/json' \
+  -d '{"plugins":["amazon_sp_api"],"query":{"query":"ice roller","limit":10}}'
+```
+
+Run the minimal connectivity test from the backend directory:
+
+```bash
+set -a
+source ../.env
+set +a
+AMAZON_SP_API_CONNECTIVITY_TEST=1 python3 -m pytest app/tests/test_amazon_sp_api_connectivity.py -q
+```
+
+The connectivity test exchanges the refresh token for an LWA access token, then calls `GET /sellers/v1/marketplaceParticipations`. It does not create, update, or ingest product records.
+
+The shared Amazon client already includes a Product Fees helper, so the next Amazon module can replace heuristic fee assumptions with SP-API fee estimates.
+
+## SP-API Production Readiness
+
+Compliance guardrails live in `compliance/`:
+
+- `SECURITY.md`
+- `ACCESS_CONTROL.md`
+- `INCIDENT_RESPONSE.md`
+- `NETWORK_SECURITY.md`
+- `CREDENTIAL_MANAGEMENT.md`
+- `AMAZON_DATA_HANDLING.md`
+- `REVIEW_LOG.md`
+- `AMAZON_DEVELOPER_PROFILE_RESPONSES.md`
+
+Run the local compliance status check:
+
+```bash
+cd backend
+python3 -m app.security.compliance_check
+```
+
+Or call the internal endpoint:
+
+```bash
+curl http://localhost:8000/security/compliance-status
+```
+
+The compliance status output reports booleans and missing environment variable names only. It must not expose secrets.
+
+Production guardrails:
+
+- `APP_ENV=production` fails fast unless `ALLOW_PUBLIC_UNAUTHENTICATED=true` is explicitly set.
+- `PUBLIC_APP_URL` should be HTTPS for any non-local deployment.
+- `COMPLIANCE_DOCS_PATH` points the backend to the compliance docs. Docker Compose mounts `./compliance` read-only at `/compliance`.
+- This app is still a private internal tool. Do not expose it publicly without deployment-layer authentication or a real admin auth layer.
 
 ### Cost Ceiling Engine
 
@@ -157,8 +231,9 @@ Core services should only know about observations, products, signals, insights, 
 
 - FastAPI backend with SQLAlchemy models and Alembic migration.
 - Postgres through Docker Compose, SQLite-compatible local tests.
-- Manual CSV, Amazon mock, Alibaba mock, Reddit mock, Google Trends mock, and opt-in Etsy/Alibaba API ingestion plugins.
+- Manual CSV, Amazon mock, Alibaba mock, Reddit mock, Google Trends mock, and opt-in Amazon SP-API/Etsy/Alibaba API ingestion plugins.
 - Demand, competition, supplier, economics, risk, and review analyzer plugins.
+- Compliance documents, secret redaction, production startup guardrails, and an internal compliance status endpoint.
 - Content-hash observation deduplication.
 - Simple alias-based product normalization.
 - Versioned, explainable scoring engine.

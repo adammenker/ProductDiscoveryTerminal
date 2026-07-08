@@ -26,10 +26,12 @@ services:
       LOG_LEVEL: INFO
       DATABASE_URL: postgresql+psycopg://pdt:pdt@db:5432/pdt
       BACKEND_CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
+      COMPLIANCE_DOCS_PATH: /compliance
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - ./compliance:/compliance:ro
     depends_on:
       db:
         condition: service_healthy

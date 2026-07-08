@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     )
     enable_scheduler: bool = False
     default_pipeline_limit: int = 100
+    allow_public_unauthenticated: bool = False
+    public_app_url: str | None = None
+    compliance_docs_path: str = "../compliance"
     etsy_api_enabled: bool = False
     etsy_api_keystring: str | None = None
     etsy_shared_secret: str | None = None
@@ -29,6 +32,22 @@ class Settings(BaseSettings):
     alibaba_access_token: str | None = None
     alibaba_product_search_url: str | None = None
     alibaba_request_timeout_seconds: float = 20.0
+    amazon_sp_api_enabled: bool = False
+    amazon_sp_api_environment: str = Field(
+        default="sandbox",
+        validation_alias=AliasChoices("AMAZON_SP_API_ENV", "AMAZON_SP_API_ENVIRONMENT"),
+    )
+    amazon_sp_api_endpoint: str | None = None
+    amazon_marketplace_id: str = "ATVPDKIKX0DER"
+    amazon_lwa_client_id: str | None = None
+    amazon_lwa_client_secret: str | None = None
+    amazon_refresh_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("AMAZON_LWA_REFRESH_TOKEN", "AMAZON_REFRESH_TOKEN"),
+    )
+    amazon_lwa_token_url: str = "https://api.amazon.com/auth/o2/token"
+    amazon_user_agent: str = "ProductDiscoveryTerminal/0.1.0 (Language=Python)"
+    amazon_request_timeout_seconds: float = 20.0
     cost_ceiling_marketplace_fee_rate: float = 0.15
     cost_ceiling_fulfillment_fee_rate: float = 0.13
     cost_ceiling_fulfillment_fee_floor: float = 3.25
@@ -40,7 +59,11 @@ class Settings(BaseSettings):
     cost_ceiling_ad_allowance_rate: float = 0.12
     cost_ceiling_target_profit_rate: float = 0.20
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        populate_by_name=True,
+    )
 
 
 @lru_cache

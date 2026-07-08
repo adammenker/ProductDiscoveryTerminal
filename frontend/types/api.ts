@@ -76,6 +76,9 @@ export type PluginInfo = {
   type: string;
   description: string | null;
   supports: string[];
+  configured?: boolean | null;
+  environment?: string | null;
+  missing_credentials?: string[];
 };
 
 export type PluginCatalog = {
@@ -112,4 +115,3 @@ export type ProductFilters = {
   limit?: number;
   offset?: number;
 };
-

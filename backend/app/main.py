@@ -3,12 +3,14 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import health, ingestion, opportunities, plugins, products
+from app.api.routes import health, ingestion, opportunities, plugins, products, security
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.security.runtime import validate_runtime_security
 
 settings = get_settings()
 configure_logging(settings.log_level)
+validate_runtime_security(settings)
 
 app = FastAPI(title="Product Discovery Terminal", version="0.1.0")
 
@@ -25,4 +27,4 @@ app.include_router(products.router)
 app.include_router(opportunities.router)
 app.include_router(plugins.router)
 app.include_router(ingestion.router)
-
+app.include_router(security.router)

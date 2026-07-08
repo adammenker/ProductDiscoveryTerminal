@@ -15,6 +15,7 @@ def test_plugin_registry_lists_mvp_plugins() -> None:
     assert {
         "manual_csv",
         "amazon_mock",
+        "amazon_sp_api",
         "alibaba_mock",
         "reddit_mock",
         "google_trends_mock",
@@ -32,6 +33,10 @@ def test_plugin_registry_lists_mvp_plugins() -> None:
 
     etsy_plugin = next(plugin for plugin in catalog["ingestion"] if plugin.name == "etsy_api")
     assert etsy_plugin.enabled is False
+    amazon_plugin = next(plugin for plugin in catalog["ingestion"] if plugin.name == "amazon_sp_api")
+    assert amazon_plugin.enabled is False
+    assert amazon_plugin.configured is False
+    assert "AMAZON_LWA_REFRESH_TOKEN" in amazon_plugin.missing_credentials
     alibaba_plugin = next(plugin for plugin in catalog["ingestion"] if plugin.name == "alibaba_open_api")
     assert alibaba_plugin.enabled is False
 
@@ -60,6 +65,14 @@ def test_etsy_plugin_is_opt_in_until_configured() -> None:
 
     assert plugin.name == "etsy_api"
     with pytest.raises(RuntimeError, match="etsy_api is disabled"):
+        plugin.fetch(IngestionQuery(query="ice roller", limit=1))
+
+
+def test_amazon_sp_api_plugin_is_opt_in_until_configured() -> None:
+    plugin = get_ingestion_plugins(["amazon_sp_api"])[0]
+
+    assert plugin.name == "amazon_sp_api"
+    with pytest.raises(RuntimeError, match="amazon_sp_api is disabled"):
         plugin.fetch(IngestionQuery(query="ice roller", limit=1))
 
 

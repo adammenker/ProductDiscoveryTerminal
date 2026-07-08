@@ -70,6 +70,9 @@ class PluginInfo(BaseModel):
     type: str
     description: str | None = None
     supports: list[str] = Field(default_factory=list)
+    configured: bool | None = None
+    environment: str | None = None
+    missing_credentials: list[str] = Field(default_factory=list)
 
 
 class PluginRunSummary(BaseModel):
@@ -105,4 +108,3 @@ class PipelineRunResponse(BaseModel):
     scores_updated: int
     observations_created: int
     errors: list[str] = Field(default_factory=list)
-
