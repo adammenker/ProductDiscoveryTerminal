@@ -1,9 +1,22 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from time import monotonic, sleep
 from typing import Any
 
 import httpx
+
+
+class AmazonSpApiError(RuntimeError):
+    pass
+
+
+class AmazonSpApiAuthenticationError(AmazonSpApiError):
+    pass
+
+
+class AmazonSpApiRequestError(AmazonSpApiError):
+    pass
 
 
 class AmazonSpApiClient:
@@ -11,6 +24,7 @@ class AmazonSpApiClient:
         self.settings = settings
         self._http_client = http_client
         self._access_token: str | None = None
+        self._access_token_expires_at = 0.0
         self._owns_client = http_client is None
 
     def close(self) -> None:
@@ -24,7 +38,7 @@ class AmazonSpApiClient:
         self.close()
 
     def get_access_token(self) -> str:
-        if self._access_token:
+        if self._access_token and monotonic() < self._access_token_expires_at:
             return self._access_token
 
         client = self._client()
@@ -41,15 +55,19 @@ class AmazonSpApiClient:
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            raise RuntimeError(
+            raise AmazonSpApiAuthenticationError(
                 f"Amazon LWA token exchange failed with HTTP {exc.response.status_code}."
             ) from exc
 
         payload = response.json()
         access_token = payload.get("access_token")
         if not access_token:
-            raise RuntimeError("Amazon LWA token exchange response did not include access_token.")
+            raise AmazonSpApiAuthenticationError(
+                "Amazon LWA token exchange response did not include access_token."
+            )
         self._access_token = str(access_token)
+        expires_in = max(60, int(payload.get("expires_in") or 3600))
+        self._access_token_expires_at = monotonic() + expires_in - 60
         return self._access_token
 
     def get_catalog_items(self, keywords: str, page_size: int = 10) -> dict[str, Any]:
@@ -90,10 +108,10 @@ class AmazonSpApiClient:
         path: str,
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        response = self._client().get(
-            f"{self._endpoint()}/{path.lstrip('/')}",
+        response = self._request(
+            "GET",
+            path,
             params=params,
-            headers=self._sp_api_headers(),
         )
         return self._json_response(response)
 
@@ -102,12 +120,41 @@ class AmazonSpApiClient:
         path: str,
         json: dict[str, Any] | list[Any] | None = None,
     ) -> dict[str, Any]:
-        response = self._client().post(
-            f"{self._endpoint()}/{path.lstrip('/')}",
+        response = self._request(
+            "POST",
+            path,
             json=json,
-            headers=self._sp_api_headers(),
         )
         return self._json_response(response)
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        attempts = max(1, int(self.settings.amazon_request_max_attempts))
+        response: httpx.Response | None = None
+        for attempt in range(attempts):
+            response = self._client().request(
+                method,
+                f"{self._endpoint()}/{path.lstrip('/')}",
+                headers=self._sp_api_headers(),
+                **kwargs,
+            )
+            if response.status_code not in {429, 500, 502, 503, 504}:
+                return response
+            if attempt + 1 < attempts:
+                retry_after = response.headers.get("Retry-After")
+                try:
+                    delay = float(retry_after) if retry_after is not None else 0.0
+                except ValueError:
+                    delay = 0.0
+                if delay <= 0:
+                    delay = float(self.settings.amazon_request_backoff_seconds) * (2**attempt)
+                sleep(max(0.0, delay))
+        assert response is not None
+        return response
 
     def _sp_api_headers(self) -> dict[str, str]:
         return {
@@ -123,8 +170,8 @@ class AmazonSpApiClient:
             return str(configured_endpoint).rstrip("/")
         environment = str(self.settings.amazon_sp_api_environment).lower()
         if environment == "production":
-            return "https://sellingpartnerapi-na.amazon.com"
-        return "https://sandbox.sellingpartnerapi-na.amazon.com"
+            return str(self.settings.amazon_sp_api_endpoint_production).rstrip("/")
+        return str(self.settings.amazon_sp_api_endpoint_sandbox).rstrip("/")
 
     def _client(self) -> httpx.Client:
         if self._http_client is None:
@@ -136,7 +183,7 @@ class AmazonSpApiClient:
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            raise RuntimeError(
+            raise AmazonSpApiRequestError(
                 f"Amazon SP-API request failed with HTTP {exc.response.status_code}."
             ) from exc
         payload = response.json()

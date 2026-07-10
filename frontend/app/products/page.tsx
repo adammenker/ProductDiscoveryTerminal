@@ -12,16 +12,20 @@ export default function ProductsPage() {
   const [category, setCategory] = useState("");
   const [recommendation, setRecommendation] = useState("");
   const [minScore, setMinScore] = useState("");
+  const [eligibility, setEligibility] = useState("");
+  const [validationDecision, setValidationDecision] = useState("");
 
   const filters = useMemo(
     () => ({
       q,
       category,
       recommendation,
+      eligible: eligibility === "" ? undefined : eligibility === "eligible",
+      validation_decision: validationDecision,
       min_score: minScore ? Number(minScore) : undefined,
       limit: 100
     }),
-    [category, minScore, q, recommendation]
+    [category, eligibility, minScore, q, recommendation, validationDecision]
   );
 
   const products = useQuery({
@@ -38,7 +42,7 @@ export default function ProductsPage() {
         <h1 className="mt-2 text-2xl font-semibold">Candidate search</h1>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[1fr_180px_190px_150px]">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_160px_180px_160px_160px_120px]">
         <label className="relative block">
           <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-terminal-muted" />
           <input
@@ -73,6 +77,26 @@ export default function ProductsPage() {
           <option value="needs_more_data">Needs More Data</option>
           <option value="skip">Skip</option>
         </select>
+        <select
+          value={eligibility}
+          onChange={(event) => setEligibility(event.target.value)}
+          className="h-10 border border-terminal-line bg-terminal-panel px-3 text-sm outline-none focus:border-terminal-green"
+        >
+          <option value="">All eligibility</option>
+          <option value="eligible">Eligible</option>
+          <option value="ineligible">Ineligible</option>
+        </select>
+        <select
+          value={validationDecision}
+          onChange={(event) => setValidationDecision(event.target.value)}
+          className="h-10 border border-terminal-line bg-terminal-panel px-3 text-sm outline-none focus:border-terminal-green"
+        >
+          <option value="">All decisions</option>
+          <option value="pursue">Pursue</option>
+          <option value="investigate">Investigate</option>
+          <option value="watch">Watch</option>
+          <option value="skip">Skip</option>
+        </select>
         <input
           value={minScore}
           onChange={(event) => setMinScore(event.target.value)}
@@ -92,4 +116,3 @@ export default function ProductsPage() {
     </div>
   );
 }
-

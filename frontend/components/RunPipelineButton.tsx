@@ -7,7 +7,7 @@ import { api } from "@/lib/api";
 export function RunPipelineButton() {
   const queryClient = useQueryClient();
   const mutation = useMutation({
-    mutationFn: api.runPipeline,
+    mutationFn: () => api.refreshExistingProducts(),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["opportunities"] }),
@@ -16,6 +16,9 @@ export function RunPipelineButton() {
       ]);
     }
   });
+  const runMessage =
+    mutation.data?.message ??
+    (mutation.data?.errors.length ? mutation.data.errors[0] : null);
 
   return (
     <div className="flex flex-wrap items-center gap-3">
@@ -26,12 +29,17 @@ export function RunPipelineButton() {
         className="inline-flex h-10 items-center gap-2 border border-terminal-green/70 bg-terminal-green/10 px-3 text-sm font-medium text-terminal-green transition hover:bg-terminal-green/15 disabled:cursor-wait disabled:opacity-60"
       >
         {mutation.isPending ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} />}
-        <span>{mutation.isPending ? "Running" : "Run Pipeline"}</span>
+        <span>{mutation.isPending ? "Refreshing" : "Refresh Real Data"}</span>
       </button>
       {mutation.data ? (
         <span className="font-mono text-xs text-terminal-muted">
           {mutation.data.status} / {mutation.data.observations_created} obs /{" "}
           {mutation.data.products_updated} products
+        </span>
+      ) : null}
+      {runMessage ? (
+        <span className="max-w-md font-mono text-xs text-terminal-amber">
+          {runMessage}
         </span>
       ) : null}
       {mutation.error ? (
@@ -42,4 +50,3 @@ export function RunPipelineButton() {
     </div>
   );
 }
-

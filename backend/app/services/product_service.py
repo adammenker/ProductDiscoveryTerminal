@@ -31,6 +31,8 @@ class ProductService:
         category: str | None = None,
         min_score: float | None = None,
         recommendation: str | None = None,
+        eligible: bool | None = None,
+        validation_decision: str | None = None,
         limit: int = 50,
         offset: int = 0,
         ranked: bool = False,
@@ -53,6 +55,10 @@ class ProductService:
             rows = [row for row in rows if (row["latest_score"] or 0) >= min_score]
         if recommendation:
             rows = [row for row in rows if row["recommendation"] == recommendation]
+        if eligible is not None:
+            rows = [row for row in rows if row["constraint_eligible"] is eligible]
+        if validation_decision:
+            rows = [row for row in rows if row["validation_decision"] == validation_decision]
 
         rows.sort(
             key=lambda row: (
@@ -71,6 +77,26 @@ class ProductService:
         if product is None:
             raise HTTPException(status_code=404, detail="Product not found")
 
+        observations = [
+            self._observation_to_dict(observation)
+            for observation in self.db.scalars(
+                select(RawObservation)
+                .where(RawObservation.product_id == product.id)
+                .order_by(RawObservation.created_at.desc())
+                .limit(50)
+            )
+        ]
+        from app.services.backtest_service import BacktestService
+        from app.services.validation_service import ValidationService
+
+        validation = ValidationService(self.db)
+        economics = validation.economics(product.id)
+        supplier = validation.supplier_validation(product.id)
+        constraints = validation.latest_constraint(product.id)
+        evidence = validation.evidence_matrix(product.id)
+        decision = validation.decision(product.id)
+        comparable_asins = self._comparable_asins(observations, economics.get("comparable_asin"))
+        discovery_sources = sorted({item["source"] for item in observations})
         return {
             "product": {
                 "id": str(product.id),
@@ -120,30 +146,36 @@ class ProductService:
                     .limit(100)
                 )
             ],
-            "recent_observations": [
-                self._observation_to_dict(observation)
-                for observation in self.db.scalars(
-                    select(RawObservation)
-                    .where(RawObservation.product_id == product.id)
-                    .order_by(RawObservation.created_at.desc())
-                    .limit(50)
-                )
-            ],
+            "recent_observations": observations,
+            "discovery_source": {
+                "sources": discovery_sources,
+                "primary": discovery_sources[0] if discovery_sources else "manual",
+                "last_updated": observations[0]["observed_at"] if observations else product.updated_at,
+                "confidence": min(1.0, 0.45 + len(discovery_sources) * 0.1),
+            },
+            "comparable_asins": comparable_asins,
+            "economics_validator": economics,
+            "supplier_validation": supplier,
+            "constraint_evaluation": constraints,
+            "evidence_matrix": evidence["rows"],
+            "cross_source_confidence_score": evidence["cross_source_confidence_score"],
+            "missing_evidence": evidence["missing_evidence"],
+            "validation_decision": decision,
+            "paper_trading_history": BacktestService(self.db).list_trades(product.id),
         }
 
     def build_context(self, product_id: uuid.UUID | str) -> ProductContext:
         product = self.db.get(ProductCandidate, uuid.UUID(str(product_id)))
         if product is None:
             raise ValueError(f"Product {product_id} not found")
+        observations = self._current_observations(product.id)
         return ProductContext(
             product_id=str(product.id),
             canonical_name=product.canonical_name,
             category=product.category,
             observations=[
                 self._observation_to_dict(observation)
-                for observation in self.db.scalars(
-                    select(RawObservation).where(RawObservation.product_id == product.id)
-                )
+                for observation in observations
             ],
             market_signals=[
                 self._market_signal_to_dict(signal)
@@ -169,6 +201,34 @@ class ProductService:
             ],
         )
 
+    def _current_observations(self, product_id: uuid.UUID) -> list[RawObservation]:
+        observations = self.db.scalars(
+            select(RawObservation)
+            .where(RawObservation.product_id == product_id)
+            .order_by(
+                RawObservation.observed_at.desc(),
+                RawObservation.created_at.desc(),
+                RawObservation.id.desc(),
+            )
+        )
+        current: list[RawObservation] = []
+        seen: set[tuple[str, str]] = set()
+        for observation in observations:
+            metadata = observation.metadata_ or {}
+            asin = metadata.get("asin") or metadata.get("comparable_asin")
+            identity = (
+                str(asin).upper()
+                if asin
+                else observation.external_id
+                or observation.content_hash
+            )
+            key = (observation.source_plugin, identity)
+            if key in seen:
+                continue
+            seen.add(key)
+            current.append(observation)
+        return current
+
     def latest_score(self, product_id: uuid.UUID) -> OpportunityScore | None:
         return self.db.scalar(
             select(OpportunityScore)
@@ -180,6 +240,14 @@ class ProductService:
     def _list_item(self, product: ProductCandidate) -> dict[str, Any]:
         latest = self.latest_score(product.id)
         latest_dict = self._score_to_dict(latest)
+        from app.services.validation_service import ValidationService
+
+        validation = ValidationService(self.db)
+        economics = validation.economics(product.id)
+        supplier = validation.supplier_validation(product.id)
+        constraints = validation.latest_constraint(product.id)
+        evidence = validation.evidence_matrix(product.id)
+        decision = validation.decision(product.id)
         return {
             "id": str(product.id),
             "canonical_name": product.canonical_name,
@@ -195,6 +263,12 @@ class ProductService:
             "risk_score": latest_dict["risk_score"] if latest_dict else None,
             "confidence_score": latest_dict["confidence_score"] if latest_dict else None,
             "explanation": latest_dict["explanation"] if latest_dict else None,
+            "economics_decision": economics.get("decision"),
+            "supplier_validation_decision": supplier.get("decision"),
+            "constraint_eligible": constraints.get("eligible"),
+            "cross_source_confidence_score": evidence.get("cross_source_confidence_score"),
+            "validation_decision": decision.get("decision"),
+            "missing_evidence": evidence.get("missing_evidence") or [],
             "updated_at": product.updated_at,
         }
 
@@ -311,3 +385,59 @@ class ProductService:
             "metadata": insight.metadata_,
             "created_at": insight.created_at,
         }
+
+    @staticmethod
+    def _comparable_asins(
+        observations: list[dict[str, Any]],
+        selected_asin: str | None,
+    ) -> list[dict[str, Any]]:
+        rows: dict[str, dict[str, Any]] = {}
+        for observation in observations:
+            if "amazon" not in str(observation.get("source") or "").lower():
+                continue
+            metadata = observation.get("metadata") or {}
+            external_id = str(observation.get("external_id") or "")
+            asin = metadata.get("asin") or metadata.get("comparable_asin")
+            if not asin and external_id:
+                asin = external_id.split(":", 1)[0]
+            if not asin:
+                continue
+            asin = str(asin).upper().split(":", 1)[0]
+            metrics = observation.get("metrics") or {}
+            row = rows.setdefault(
+                asin,
+                {
+                    "asin": asin,
+                    "title": None,
+                    "url": f"https://www.amazon.com/dp/{asin}",
+                    "price": None,
+                    "fees": None,
+                    "brand": None,
+                    "sales_rank": None,
+                    "review_count": None,
+                    "source": observation.get("source"),
+                    "observed_at": observation.get("observed_at"),
+                    "selected_proxy": asin == selected_asin,
+                },
+            )
+            evidence_type = metadata.get("evidence_type")
+            if evidence_type == "amazon_catalog" or row["title"] is None:
+                row["title"] = metadata.get("title") or observation.get("title")
+                row["brand"] = metadata.get("brand") or row["brand"]
+                row["sales_rank"] = (
+                    metrics.get("bestseller_rank")
+                    or metrics.get("sales_rank")
+                    or row["sales_rank"]
+                )
+            if metrics.get("price") is not None:
+                row["price"] = metrics["price"]
+            if metrics.get("total_amazon_fees") is not None:
+                row["fees"] = metrics["total_amazon_fees"]
+            if metrics.get("review_count") is not None:
+                row["review_count"] = metrics["review_count"]
+            if observation.get("observed_at") and (
+                row["observed_at"] is None
+                or observation["observed_at"] > row["observed_at"]
+            ):
+                row["observed_at"] = observation["observed_at"]
+        return sorted(rows.values(), key=lambda row: (not row["selected_proxy"], row["asin"]))

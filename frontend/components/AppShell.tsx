@@ -1,13 +1,23 @@
 "use client";
 
 import clsx from "clsx";
-import { Gauge, History, PackageSearch, PlugZap, TerminalSquare } from "lucide-react";
+import {
+  ChartNoAxesCombined,
+  Gauge,
+  History,
+  ListChecks,
+  PackageSearch,
+  PlugZap,
+  TerminalSquare
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: Gauge },
+  { href: "/validator", label: "Validator", icon: ListChecks },
   { href: "/products", label: "Products", icon: PackageSearch },
+  { href: "/backtests", label: "Backtests", icon: ChartNoAxesCombined },
   { href: "/plugins", label: "Plugins", icon: PlugZap },
   { href: "/runs", label: "Runs", icon: History }
 ];
@@ -58,7 +68,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <TerminalSquare size={18} className="text-terminal-green" />
               PDT
             </Link>
-            <nav className="flex items-center gap-2">
+            <nav className="flex max-w-[250px] items-center gap-2 overflow-x-auto">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 return (
@@ -80,4 +90,3 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
-

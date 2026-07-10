@@ -15,6 +15,7 @@ class AlibabaMockPlugin:
         "type": "ingestion",
         "description": "Simulates supplier economics observations.",
         "requires_auth": False,
+        "auto_run": False,
         "supports": ["supplier"],
     }
 
@@ -51,4 +52,3 @@ class AlibabaMockPlugin:
                 )
             )
         return observations
-

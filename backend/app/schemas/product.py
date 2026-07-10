@@ -21,6 +21,12 @@ class ProductListItem(BaseModel):
     risk_score: float | None = None
     confidence_score: float | None = None
     explanation: str | None = None
+    economics_decision: str | None = None
+    supplier_validation_decision: str | None = None
+    constraint_eligible: bool | None = None
+    cross_source_confidence_score: float | None = None
+    validation_decision: str | None = None
+    missing_evidence: list[str] = Field(default_factory=list)
     updated_at: datetime
 
 
@@ -38,6 +44,15 @@ class ProductDetailResponse(BaseModel):
     cost_models: list[dict[str, Any]] = Field(default_factory=list)
     insights: list[dict[str, Any]] = Field(default_factory=list)
     recent_observations: list[dict[str, Any]] = Field(default_factory=list)
+    discovery_source: dict[str, Any] = Field(default_factory=dict)
+    comparable_asins: list[dict[str, Any]] = Field(default_factory=list)
+    economics_validator: dict[str, Any] = Field(default_factory=dict)
+    supplier_validation: dict[str, Any] = Field(default_factory=dict)
+    constraint_evaluation: dict[str, Any] = Field(default_factory=dict)
+    evidence_matrix: list[dict[str, Any]] = Field(default_factory=list)
+    cross_source_confidence_score: float = 0
+    missing_evidence: list[str] = Field(default_factory=list)
+    validation_decision: dict[str, Any] = Field(default_factory=dict)
+    paper_trading_history: list[dict[str, Any]] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
-

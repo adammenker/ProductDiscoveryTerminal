@@ -3,7 +3,11 @@ from __future__ import annotations
 from statistics import mean
 
 from app.core.config import Settings, get_settings
-from app.economics.cost_ceiling import CostCeilingInputs, calculate_cost_ceiling
+from app.economics.cost_ceiling import (
+    CostCeilingInputs,
+    calculate_cost_ceiling,
+    calculate_cost_ceiling_v2,
+)
 from app.schemas.plugin import AnalyzerResult, ProductContext
 
 
@@ -65,6 +69,17 @@ class EconomicsAnalyzer:
                 packaging_cost_per_unit=packaging_cost,
             )
         )
+        cost_ceiling_v2 = calculate_cost_ceiling_v2(
+            selling_price=selling_price,
+            amazon_fees=marketplace_fee + fulfillment_cost,
+            inbound_cost_per_unit=inbound_cost,
+            storage_estimate=storage_cost,
+            return_allowance_rate=self.settings.cost_ceiling_return_allowance_rate,
+            ad_allowance_rate=self.settings.cost_ceiling_ad_allowance_rate,
+            supplier_unit_cost=unit_cost,
+            supplier_freight_cost_per_unit=freight_cost,
+            packaging_cost_per_unit=packaging_cost,
+        )
 
         gross_margin = (
             round(((selling_price - unit_cost) / selling_price) * 100, 2)
@@ -106,7 +121,15 @@ class EconomicsAnalyzer:
                         "ad_allowance_rate": self.settings.cost_ceiling_ad_allowance_rate,
                         "target_profit_rate": self.settings.cost_ceiling_target_profit_rate,
                         "cost_ceiling": cost_ceiling.as_dict(),
+                        "cost_ceiling_v2": cost_ceiling_v2,
                         "fee_source": "heuristic_until_amazon_sp_api_product_fees_is_configured",
+                        "fee_source_confidence": "low",
+                        "source_priority": [
+                            "amazon_spapi_product_fees",
+                            "manual_amazon_fee_estimate",
+                            "third_party_fee_estimate",
+                            "configurable_defaults",
+                        ],
                         "source": "deterministic_mvp_estimate",
                     },
                 }

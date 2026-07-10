@@ -42,7 +42,10 @@ class PipelineRunner:
             plugin_runs.append(run)
             observations_created += run.records_created
 
-        updated_products = NormalizationService(self.db).normalize_new_observations()
+        updated_products = NormalizationService(self.db).normalize_new_observations(
+            target_product_id=request.query.metadata.get("product_id"),
+            plugin_run_ids=[run.id for run in plugin_runs],
+        )
         product_ids: list[UUID | str] = [str(product.id) for product in updated_products]
 
         if request.run_analyzers and product_ids:
@@ -84,7 +87,9 @@ def _pipeline_status(plugin_runs: list[PluginRun], errors: list[str]) -> str:
     if errors and not plugin_runs:
         return RunStatus.FAILED.value
     statuses = [run.status for run in plugin_runs]
-    if any(status in {RunStatus.FAILED, RunStatus.PARTIAL_SUCCESS} for status in statuses) or errors:
+    if any(status == RunStatus.PARTIAL_SUCCESS for status in statuses):
+        return RunStatus.PARTIAL_SUCCESS.value
+    if any(status == RunStatus.FAILED for status in statuses) or errors:
         if any(status == RunStatus.SUCCESS for status in statuses):
             return RunStatus.PARTIAL_SUCCESS.value
         return RunStatus.FAILED.value

@@ -42,19 +42,32 @@ def demand_score(observations: list[dict], market_signals: list[dict]) -> float:
     volume_values = _signal_values(market_signals, MarketSignalType.SEARCH_VOLUME.value)
     review_values = _signal_values(market_signals, MarketSignalType.REVIEW_COUNT.value)
     social_values = _signal_values(market_signals, MarketSignalType.SOCIAL_MENTIONS.value)
+    rank_values = _signal_values(market_signals, MarketSignalType.BESTSELLER_RANK.value)
 
-    evidence_score = min(40, len(observations) * 8) + min(20, len(sources) * 5)
-    signal_score = 0.0
+    signal_score = float(min(10, len(sources) * 5))
     if trend_values:
         signal_score += min(20, mean(trend_values) / 5)
     if volume_values:
-        signal_score += min(10, mean(volume_values) / 120)
+        signal_score += min(15, mean(volume_values) / 80)
     if review_values:
         signal_score += min(15, mean(review_values) / 80)
     if social_values:
         signal_score += min(10, mean(social_values) / 3)
+    if rank_values:
+        best_rank = min(rank_values)
+        signal_score += (
+            30
+            if best_rank <= 100
+            else 25
+            if best_rank <= 1_000
+            else 18
+            if best_rank <= 10_000
+            else 10
+            if best_rank <= 50_000
+            else 5
+        )
 
-    return round(clamp(max(30 if observations else 0, evidence_score + signal_score)), 2)
+    return round(clamp(signal_score), 2)
 
 
 def growth_score(market_signals: list[dict]) -> float:
@@ -71,7 +84,7 @@ def growth_score(market_signals: list[dict]) -> float:
         return 90
     if trend_values:
         return round(clamp(mean(trend_values)), 2)
-    return 50
+    return 0
 
 
 def competition_score(market_signals: list[dict]) -> float:
@@ -135,6 +148,8 @@ def pain_point_score(insights: list[dict]) -> float:
         int((insight.get("metadata") or {}).get("complaint_count") or 0)
         for insight in complaint_insights
     )
+    if complaint_count == 0:
+        return 40
     has_feature_gap = any(
         insight.get("insight_type") in {InsightType.FEATURE_GAP.value, InsightType.DIFFERENTIATION_IDEA.value}
         for insight in complaint_insights
@@ -179,6 +194,8 @@ def confidence_score(
     if any(
         insight.get("insight_type")
         in {InsightType.REVIEW_SUMMARY.value, InsightType.COMPLAINT_CLUSTER.value, InsightType.FEATURE_GAP.value}
+        and bool(insight.get("evidence_observation_ids"))
+        and int((insight.get("metadata") or {}).get("complaint_count") or 0) > 0
         for insight in insights
     ):
         confidence += 10

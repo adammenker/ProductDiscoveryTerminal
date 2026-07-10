@@ -18,6 +18,12 @@ if TYPE_CHECKING:
     from app.models.observation import RawObservation
     from app.models.score import OpportunityScore
     from app.models.signal import CostModel, MarketSignal, SupplierSignal
+    from app.models.validation import (
+        ConstraintEvaluation,
+        OpportunitySnapshot,
+        PaperTrade,
+        SupplierQuote,
+    )
 
 
 def enum_values(enum_cls: type[StrEnum]) -> list[str]:
@@ -61,6 +67,22 @@ class ProductCandidate(TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
     opportunity_scores: Mapped[list["OpportunityScore"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+    supplier_quotes: Mapped[list["SupplierQuote"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+    constraint_evaluations: Mapped[list["ConstraintEvaluation"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+    opportunity_snapshots: Mapped[list["OpportunitySnapshot"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+    paper_trades: Mapped[list["PaperTrade"]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
     )

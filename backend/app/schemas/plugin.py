@@ -108,3 +108,4 @@ class PipelineRunResponse(BaseModel):
     scores_updated: int
     observations_created: int
     errors: list[str] = Field(default_factory=list)
+    message: str | None = None

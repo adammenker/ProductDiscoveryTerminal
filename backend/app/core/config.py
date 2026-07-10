@@ -38,6 +38,8 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("AMAZON_SP_API_ENV", "AMAZON_SP_API_ENVIRONMENT"),
     )
     amazon_sp_api_endpoint: str | None = None
+    amazon_sp_api_endpoint_sandbox: str = "https://sandbox.sellingpartnerapi-na.amazon.com"
+    amazon_sp_api_endpoint_production: str = "https://sellingpartnerapi-na.amazon.com"
     amazon_marketplace_id: str = "ATVPDKIKX0DER"
     amazon_lwa_client_id: str | None = None
     amazon_lwa_client_secret: str | None = None
@@ -48,6 +50,15 @@ class Settings(BaseSettings):
     amazon_lwa_token_url: str = "https://api.amazon.com/auth/o2/token"
     amazon_user_agent: str = "ProductDiscoveryTerminal/0.1.0 (Language=Python)"
     amazon_request_timeout_seconds: float = 20.0
+    amazon_request_max_attempts: int = 3
+    amazon_request_backoff_seconds: float = 0.5
+    amazon_catalog_search_limit: int = 10
+    amazon_fees_default_modeled_price: float = 24.99
+    amazon_refresh_catalog_limit: int = 10
+    amazon_refresh_pricing_limit: int = 10
+    amazon_refresh_fee_limit: int = 5
+    amazon_fees_cache_ttl_hours: float = 24.0
+    amazon_fees_request_interval_seconds: float = 1.1
     cost_ceiling_marketplace_fee_rate: float = 0.15
     cost_ceiling_fulfillment_fee_rate: float = 0.13
     cost_ceiling_fulfillment_fee_floor: float = 3.25

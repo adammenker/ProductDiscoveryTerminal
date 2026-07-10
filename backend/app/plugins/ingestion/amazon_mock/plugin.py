@@ -15,6 +15,7 @@ class AmazonMockPlugin:
         "type": "ingestion",
         "description": "Simulates marketplace listing observations.",
         "requires_auth": False,
+        "auto_run": False,
         "supports": ["marketplace_listing", "product"],
     }
 
@@ -51,4 +52,3 @@ class AmazonMockPlugin:
                 )
             )
         return observations
-

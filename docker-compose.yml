@@ -27,11 +27,15 @@ services:
       DATABASE_URL: postgresql+psycopg://pdt:pdt@db:5432/pdt
       BACKEND_CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
       COMPLIANCE_DOCS_PATH: /compliance
+      PROJECT_ROOT: /workspace
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
       - ./compliance:/compliance:ro
+      - ./.env.example:/workspace/.env.example:ro
+      - ./.gitignore:/workspace/.gitignore:ro
+      - ./compliance:/workspace/compliance:ro
     depends_on:
       db:
         condition: service_healthy

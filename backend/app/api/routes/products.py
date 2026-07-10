@@ -18,6 +18,8 @@ def list_products(
     category: str | None = None,
     min_score: float | None = None,
     recommendation: str | None = None,
+    eligible: bool | None = None,
+    validation_decision: str | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -27,6 +29,8 @@ def list_products(
         category=category,
         min_score=min_score,
         recommendation=recommendation,
+        eligible=eligible,
+        validation_decision=validation_decision,
         limit=limit,
         offset=offset,
     )
@@ -36,4 +40,3 @@ def list_products(
 @router.get("/{product_id}", response_model=ProductDetailResponse)
 def get_product(product_id: UUID, db: Session = Depends(get_db)) -> dict:
     return ProductService(db).get_detail(product_id)
-

@@ -15,6 +15,7 @@ class RedditMockPlugin:
         "type": "ingestion",
         "description": "Simulates customer discussion and pain point observations.",
         "requires_auth": False,
+        "auto_run": False,
         "supports": ["social_post", "review"],
     }
 
@@ -46,4 +47,3 @@ class RedditMockPlugin:
                 )
             )
         return observations
-

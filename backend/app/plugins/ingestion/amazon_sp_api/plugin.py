@@ -16,6 +16,7 @@ class AmazonSpApiPlugin:
         "version": version,
         "type": "ingestion",
         "description": "Fetches Amazon Catalog Items evidence through Selling Partner API.",
+        "auto_run": False,
         "requires_auth": True,
         "supports": ["marketplace_listing", "product", "catalog_items"],
         "config_schema": {

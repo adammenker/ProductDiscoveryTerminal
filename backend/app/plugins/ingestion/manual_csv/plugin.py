@@ -16,6 +16,7 @@ class ManualCsvPlugin:
         "type": "ingestion",
         "description": "Loads product observations from a local CSV file.",
         "requires_auth": False,
+        "auto_run": False,
         "supports": ["product", "marketplace_listing", "supplier"],
         "config_schema": {"file_path": {"type": "string", "required": False}},
     }
@@ -49,6 +50,8 @@ class ManualCsvPlugin:
                         "moq",
                         "lead_time_days",
                         "shipping_estimate",
+                        "freight_cost_per_unit",
+                        "packaging_cost_per_unit",
                     )
                     if row.get(key)
                 }
@@ -67,6 +70,10 @@ class ManualCsvPlugin:
                             "product_name": title.strip().lower(),
                             "category": row.get("category") or None,
                             "supplier_name": row.get("supplier_name") or None,
+                            "supplier_url": row.get("supplier_url") or None,
+                            "quote_date": row.get("quote_date") or None,
+                            "currency": row.get("currency") or "USD",
+                            "supplier_notes": row.get("supplier_notes") or None,
                             "country": row.get("country") or None,
                             "row_index": index,
                         },

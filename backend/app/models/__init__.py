@@ -13,14 +13,28 @@ from app.models.plugin_run import PluginRun
 from app.models.product import ProductAlias, ProductCandidate
 from app.models.score import OpportunityScore
 from app.models.signal import CostModel, MarketSignal, SupplierSignal
+from app.models.validation import (
+    BacktestRun,
+    ConstraintEvaluation,
+    OpportunitySnapshot,
+    OutcomeMeasurement,
+    PaperTrade,
+    RuleProfile,
+    SupplierQuote,
+)
 
 __all__ = [
     "CostModel",
+    "BacktestRun",
+    "ConstraintEvaluation",
     "InsightType",
     "MarketSignal",
     "MarketSignalType",
     "ObservationEntityType",
     "OpportunityScore",
+    "OpportunitySnapshot",
+    "OutcomeMeasurement",
+    "PaperTrade",
     "PluginRun",
     "PluginType",
     "ProductAlias",
@@ -30,6 +44,7 @@ __all__ = [
     "RawObservation",
     "Recommendation",
     "RunStatus",
+    "RuleProfile",
+    "SupplierQuote",
     "SupplierSignal",
 ]
-

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,7 @@ from app.security.compliance_check import compliance_status
 from app.security.redaction import REDACTED, redact_sensitive
 from app.security.runtime import validate_runtime_security
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(os.getenv("PROJECT_ROOT", Path(__file__).resolve().parents[3]))
 COMPLIANCE_DIR = REPO_ROOT / "compliance"
 
 

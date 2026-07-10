@@ -1,22 +1,24 @@
 from __future__ import annotations
 
+import re
+
 from app.schemas.plugin import AnalyzerResult, ProductContext
 
-COMPLAINT_TERMS = (
-    "complain",
-    "complaints",
-    "poor",
-    "weak",
-    "hard",
-    "break",
-    "leak",
-    "flimsy",
-    "difficult",
-    "odor",
-    "zippers",
-    "warped",
-    "roll up",
+COMPLAINT_PATTERNS = (
+    r"\bcomplain(?:s|ed|ing|t|ts)?\b",
+    r"\bpoor\b",
+    r"\bweak\b",
+    r"\bhard\b",
+    r"\bbreak(?:s|ing|age)?\b",
+    r"\bleak(?:s|ed|ing|age)?\b",
+    r"\bflimsy\b",
+    r"\bdifficult\b",
+    r"\bodou?r\b",
+    r"\bzippers?\b",
+    r"\bwarped\b",
+    r"\broll up\b",
 )
+CUSTOMER_EVIDENCE_TYPES = {"review", "social_post", "forum_post"}
 
 
 class ReviewAnalyzer:
@@ -34,8 +36,14 @@ class ReviewAnalyzer:
         complaint_observations = []
         snippets = []
         for observation in context.observations:
+            source = str(observation.get("source") or "").lower()
+            entity_type = str(observation.get("entity_type") or "").lower()
+            if entity_type not in CUSTOMER_EVIDENCE_TYPES and not any(
+                token in source for token in ("reddit", "review", "forum")
+            ):
+                continue
             text = f"{observation.get('title') or ''} {observation.get('raw_text') or ''}".lower()
-            if any(term in text for term in COMPLAINT_TERMS):
+            if any(re.search(pattern, text) for pattern in COMPLAINT_PATTERNS):
                 complaint_observations.append(observation)
                 snippets.append(observation.get("raw_text") or observation.get("title") or "")
 
@@ -101,4 +109,3 @@ class ReviewAnalyzer:
                 },
             ]
         )
-

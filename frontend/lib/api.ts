@@ -1,10 +1,23 @@
 import type {
+  BacktestSummary,
+  ConstraintEvaluation,
+  OutcomeCreateResponse,
+  OutcomeInput,
+  PaperTrade,
+  PipelineRunInput,
   PipelineRunResponse,
   PluginCatalog,
   PluginRunSummary,
+  ProductCreateInput,
+  ProductCreateResponse,
   ProductDetail,
   ProductFilters,
-  ProductListResponse
+  ProductListResponse,
+  ProductValidation,
+  SnapshotInput,
+  SnapshotResponse,
+  SupplierQuote,
+  SupplierQuoteInput
 } from "@/types/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -20,7 +33,14 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(body || `Request failed with ${response.status}`);
+    let message = body;
+    try {
+      const parsed = JSON.parse(body) as { detail?: string };
+      message = parsed.detail ?? body;
+    } catch {
+      // Preserve non-JSON error bodies from proxies and the API.
+    }
+    throw new Error(message || `Request failed with ${response.status}`);
   }
 
   return response.json() as Promise<T>;
@@ -36,18 +56,41 @@ function toQuery(filters: ProductFilters = {}) {
   return query ? `?${query}` : "";
 }
 
+function post<T>(path: string, body: unknown) {
+  return fetchJson<T>(path, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+}
+
 export const api = {
   products: (filters?: ProductFilters) =>
     fetchJson<ProductListResponse>(`/products${toQuery(filters)}`),
   opportunities: (filters?: ProductFilters) =>
     fetchJson<ProductListResponse>(`/opportunities${toQuery(filters)}`),
   product: (id: string) => fetchJson<ProductDetail>(`/products/${id}`),
+  createProduct: (input: ProductCreateInput) => post<ProductCreateResponse>("/products", input),
+  productValidation: (id: string) =>
+    fetchJson<ProductValidation>(`/products/${id}/validation`),
+  supplierQuotes: (id: string) =>
+    fetchJson<SupplierQuote[]>(`/products/${id}/supplier-quotes`),
+  createSupplierQuote: (id: string, input: SupplierQuoteInput) =>
+    post<SupplierQuote>(`/products/${id}/supplier-quotes`, input),
+  evaluateConstraints: (id: string, profileId?: string) =>
+    post<ConstraintEvaluation>(
+      `/products/${id}/evaluate-constraints${profileId ? `?profile_id=${encodeURIComponent(profileId)}` : ""}`,
+      {}
+    ),
+  createSnapshot: (id: string, input: SnapshotInput) =>
+    post<SnapshotResponse>(`/products/${id}/snapshots`, input),
+  paperTrades: () => fetchJson<PaperTrade[]>("/paper-trades"),
+  addPaperTradeOutcome: (id: string, input: OutcomeInput) =>
+    post<OutcomeCreateResponse>(`/paper-trades/${id}/outcomes`, input),
+  backtestSummary: () => fetchJson<BacktestSummary>("/backtests/summary"),
   plugins: () => fetchJson<PluginCatalog>("/plugins"),
   pluginRuns: (limit = 50) => fetchJson<PluginRunSummary[]>(`/plugin-runs?limit=${limit}`),
-  runPipeline: () =>
-    fetchJson<PipelineRunResponse>("/ingestion/run", {
-      method: "POST",
-      body: JSON.stringify({})
-    })
+  runPipeline: (input: PipelineRunInput = {}) =>
+    post<PipelineRunResponse>("/ingestion/run", input),
+  refreshExistingProducts: (limit = 10) =>
+    post<PipelineRunResponse>(`/ingestion/refresh-existing?limit=${limit}`, {})
 };
-

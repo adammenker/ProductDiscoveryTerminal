@@ -1,4 +1,13 @@
-from app.integrations.amazon_sp_api.client import AmazonSpApiClient
+from app.integrations.amazon_sp_api.client import (
+    AmazonSpApiAuthenticationError,
+    AmazonSpApiClient,
+    AmazonSpApiError,
+    AmazonSpApiRequestError,
+)
 
-__all__ = ["AmazonSpApiClient"]
-
+__all__ = [
+    "AmazonSpApiAuthenticationError",
+    "AmazonSpApiClient",
+    "AmazonSpApiError",
+    "AmazonSpApiRequestError",
+]

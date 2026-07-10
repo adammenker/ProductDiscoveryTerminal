@@ -15,6 +15,7 @@ class GoogleTrendsMockPlugin:
         "type": "ingestion",
         "description": "Simulates search trend growth observations.",
         "requires_auth": False,
+        "auto_run": False,
         "supports": ["trend", "search_result"],
     }
 
@@ -48,4 +49,3 @@ class GoogleTrendsMockPlugin:
                 )
             )
         return observations
-

@@ -80,7 +80,12 @@ curl -X POST http://localhost:8000/ingestion/run \
   -d '{"plugins":["alibaba_open_api"],"query":{"query":"ice roller","limit":25}}'
 ```
 
-For now, `alibaba_mock` remains the default supplier plugin so the pipeline keeps working without live supplier credentials.
+`alibaba_mock` remains available for explicit development/testing runs, but it is
+never selected automatically.
+
+Mock and bundled sample plugins are explicit-run only. A pipeline request without
+plugin names does not ingest demo data. The live dashboard therefore contains only
+production API observations or user-provided manual imports and supplier quotes.
 
 ### Amazon Selling Partner API
 
@@ -121,6 +126,39 @@ competitive-pricing lookup, which requires the Pricing role. It does not create,
 update, or ingest product records.
 
 The shared Amazon client already includes a Product Fees helper, so the next Amazon module can replace heuristic fee assumptions with SP-API fee estimates.
+
+### Validation-first workflow
+
+Discovery candidates now flow through:
+
+```text
+candidate -> comparable ASINs -> economics -> supplier quotes
+          -> constraints -> evidence matrix -> decision -> paper trade
+```
+
+The product detail API exposes `economics_validator`, `supplier_validation`,
+`constraint_evaluation`, `evidence_matrix`, `validation_decision`, and
+`paper_trading_history`. Cost ceilings include 20%, 30%, 40%, and 50% target
+margin scenarios plus a low/modeled/high sensitivity table.
+
+Useful manual endpoints:
+
+```text
+POST /products
+POST /products/{id}/supplier-quotes
+POST /supplier-quotes/import-text
+POST /products/{id}/evaluate-constraints
+POST /products/{id}/snapshots
+POST /paper-trades/{id}/outcomes
+GET  /backtests/summary
+```
+
+Product Opportunity Explorer remains manual-only. Run
+`product_opportunity_explorer_manual_csv` with `query.metadata.file_path` to
+import a user-provided CSV; the application does not scrape Seller Central.
+
+Amazon fee estimates based on comparable ASINs are always proxies, not
+guaranteed actual fees.
 
 ## SP-API Production Readiness
 

@@ -4,6 +4,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -30,10 +31,19 @@ class AnalyzerRunner:
         self.product_service = ProductService(db)
 
     def run(self, product_ids: list[uuid.UUID | str]) -> list[PluginRun]:
+        self._replace_derived_snapshots(product_ids)
         runs: list[PluginRun] = []
         for plugin in get_analyzer_plugins():
             runs.append(self._run_plugin(plugin, product_ids))
         return runs
+
+    def _replace_derived_snapshots(self, product_ids: list[uuid.UUID | str]) -> None:
+        ids = [uuid.UUID(str(product_id)) for product_id in product_ids]
+        if not ids:
+            return
+        for model in (MarketSignal, SupplierSignal, CostModel, ProductInsight):
+            self.db.execute(delete(model).where(model.product_id.in_(ids)))
+        self.db.commit()
 
     def _run_plugin(self, plugin: AnalyzerPlugin, product_ids: list[uuid.UUID | str]) -> PluginRun:
         run = PluginRun(
