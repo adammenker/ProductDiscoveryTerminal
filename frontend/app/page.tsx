@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ExternalLink, Loader2, Search } from "lucide-react";
+import { AlertTriangle, ExternalLink, Loader2, RefreshCw, Search } from "lucide-react";
 import Link from "next/link";
 import { type FormEvent, useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
@@ -14,6 +14,7 @@ import type { ProductListItem, ProductResearchResponse } from "@/types/api";
 export default function DashboardPage() {
   const queryClient = useQueryClient();
   const [term, setTerm] = useState("");
+  const [lastSubmittedQuery, setLastSubmittedQuery] = useState("");
 
   const productsQuery = useQuery({
     queryKey: ["opportunities", { limit: 100, validation: true }],
@@ -40,6 +41,13 @@ export default function DashboardPage() {
     event.preventDefault();
     const query = term.trim();
     if (query.length < 2) return;
+    setLastSubmittedQuery(query);
+    research.mutate(query);
+  }
+
+  function retryLastSearch() {
+    const query = lastSubmittedQuery.trim();
+    if (query.length < 2 || research.isPending) return;
     research.mutate(query);
   }
 
@@ -75,7 +83,13 @@ export default function DashboardPage() {
           </button>
         </form>
 
-        <ResearchStatus result={research.data} error={research.error} isPending={research.isPending} />
+        <ResearchStatus
+          result={research.data}
+          error={research.error}
+          isPending={research.isPending}
+          retryQuery={lastSubmittedQuery}
+          onRetry={retryLastSearch}
+        />
       </section>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -118,11 +132,15 @@ export default function DashboardPage() {
 function ResearchStatus({
   result,
   error,
-  isPending
+  isPending,
+  retryQuery,
+  onRetry
 }: {
   result?: ProductResearchResponse;
   error: Error | null;
   isPending: boolean;
+  retryQuery: string;
+  onRetry: () => void;
 }) {
   if (isPending) {
     return (
@@ -134,8 +152,23 @@ function ResearchStatus({
 
   if (error) {
     return (
-      <div className="mt-4 border border-terminal-rose/50 bg-terminal-rose/5 px-3 py-2 text-sm text-terminal-rose">
-        {error.message}
+      <div className="mt-4 border border-terminal-rose/50 bg-terminal-rose/5 px-3 py-3 text-sm text-terminal-rose">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="font-medium">Search failed{retryQuery ? ` for "${retryQuery}"` : ""}</div>
+            <div className="mt-1 text-xs">{error.message}</div>
+          </div>
+          {retryQuery ? (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="inline-flex h-9 items-center justify-center gap-2 border border-current px-3 font-mono text-xs uppercase tracking-[0.12em] transition hover:bg-terminal-rose/10"
+            >
+              <RefreshCw size={14} />
+              Retry
+            </button>
+          ) : null}
+        </div>
       </div>
     );
   }
@@ -166,10 +199,24 @@ function ResearchStatus({
         </Link>
       </div>
       {pipeline.errors.length ? (
-        <div className="mt-3 space-y-1 border-t border-current/20 pt-2 text-xs">
-          {pipeline.errors.slice(0, 4).map((message) => (
-            <div key={message}>{message}</div>
-          ))}
+        <div className="mt-3 border-t border-current/20 pt-2">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-1 text-xs">
+              {pipeline.errors.slice(0, 4).map((message) => (
+                <div key={message}>{message}</div>
+              ))}
+            </div>
+            {retryQuery ? (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="inline-flex h-9 items-center justify-center gap-2 border border-current px-3 font-mono text-xs uppercase tracking-[0.12em] transition hover:bg-terminal-amber/10"
+              >
+                <RefreshCw size={14} />
+                Retry
+              </button>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>
