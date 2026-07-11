@@ -5,7 +5,9 @@ import { api } from "@/lib/api";
 import type {
   OutcomeInput,
   PipelineRunInput,
+  ComparableUpdateInput,
   ProductCreateInput,
+  RecommendationFeedbackInput,
   SnapshotInput,
   SupplierQuoteInput
 } from "@/types/api";
@@ -94,6 +96,24 @@ export function useEvaluateConstraints(productId: string) {
   const client = useQueryClient();
   return useMutation({
     mutationFn: () => api.evaluateConstraints(productId),
+    onSuccess: async () => invalidateProduct(client, productId)
+  });
+}
+
+export function useUpdateComparable(productId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ asin, input }: { asin: string; input: ComparableUpdateInput }) =>
+      api.updateComparable(productId, asin, input),
+    onSuccess: async () => invalidateProduct(client, productId)
+  });
+}
+
+export function useCreateRecommendationFeedback(productId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: RecommendationFeedbackInput) =>
+      api.createRecommendationFeedback(productId, input),
     onSuccess: async () => invalidateProduct(client, productId)
   });
 }

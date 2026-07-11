@@ -8,11 +8,16 @@ import type {
   PipelineRunResponse,
   PluginCatalog,
   PluginRunSummary,
+  ComparableAsin,
+  ComparableUpdateInput,
   ProductCreateInput,
   ProductCreateResponse,
   ProductDetail,
   ProductFilters,
   ProductListResponse,
+  ProductResearchInput,
+  ProductResearchResponse,
+  RecommendationFeedbackInput,
   ProductValidation,
   SnapshotInput,
   SnapshotResponse,
@@ -63,6 +68,13 @@ function post<T>(path: string, body: unknown) {
   });
 }
 
+function patch<T>(path: string, body: unknown) {
+  return fetchJson<T>(path, {
+    method: "PATCH",
+    body: JSON.stringify(body)
+  });
+}
+
 export const api = {
   products: (filters?: ProductFilters) =>
     fetchJson<ProductListResponse>(`/products${toQuery(filters)}`),
@@ -70,6 +82,10 @@ export const api = {
     fetchJson<ProductListResponse>(`/opportunities${toQuery(filters)}`),
   product: (id: string) => fetchJson<ProductDetail>(`/products/${id}`),
   createProduct: (input: ProductCreateInput) => post<ProductCreateResponse>("/products", input),
+  updateComparable: (productId: string, asin: string, input: ComparableUpdateInput) =>
+    patch<ComparableAsin>(`/products/${productId}/comparables/${encodeURIComponent(asin)}`, input),
+  createRecommendationFeedback: (productId: string, input: RecommendationFeedbackInput) =>
+    post<Record<string, unknown>>(`/products/${productId}/feedback`, input),
   productValidation: (id: string) =>
     fetchJson<ProductValidation>(`/products/${id}/validation`),
   supplierQuotes: (id: string) =>
@@ -91,6 +107,8 @@ export const api = {
   pluginRuns: (limit = 50) => fetchJson<PluginRunSummary[]>(`/plugin-runs?limit=${limit}`),
   runPipeline: (input: PipelineRunInput = {}) =>
     post<PipelineRunResponse>("/ingestion/run", input),
+  researchProduct: (input: ProductResearchInput) =>
+    post<ProductResearchResponse>("/ingestion/research", input),
   refreshExistingProducts: (limit = 10) =>
     post<PipelineRunResponse>(`/ingestion/refresh-existing?limit=${limit}`, {})
 };

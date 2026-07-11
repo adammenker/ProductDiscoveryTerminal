@@ -56,8 +56,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
         <div className="absolute bottom-5 left-4 right-4 border border-terminal-line bg-terminal-panel/80 p-3 font-mono text-xs text-terminal-muted">
-          <div className="text-terminal-green">mvp_v0.1</div>
-          <div className="mt-1">batch pipeline</div>
+          <div className="text-terminal-green">recommendation_v2</div>
+          <div className="mt-1">evidence aware</div>
         </div>
       </aside>
 

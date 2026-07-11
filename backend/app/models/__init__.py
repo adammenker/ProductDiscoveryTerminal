@@ -11,6 +11,11 @@ from app.models.insight import ProductInsight
 from app.models.observation import RawObservation
 from app.models.plugin_run import PluginRun
 from app.models.product import ProductAlias, ProductCandidate
+from app.models.recommendation import (
+    ComparableAsin,
+    MarketplaceAsinSnapshot,
+    RecommendationFeedback,
+)
 from app.models.score import OpportunityScore
 from app.models.signal import CostModel, MarketSignal, SupplierSignal
 from app.models.validation import (
@@ -26,6 +31,7 @@ from app.models.validation import (
 __all__ = [
     "CostModel",
     "BacktestRun",
+    "ComparableAsin",
     "ConstraintEvaluation",
     "InsightType",
     "MarketSignal",
@@ -33,6 +39,7 @@ __all__ = [
     "ObservationEntityType",
     "OpportunityScore",
     "OpportunitySnapshot",
+    "MarketplaceAsinSnapshot",
     "OutcomeMeasurement",
     "PaperTrade",
     "PluginRun",
@@ -43,6 +50,7 @@ __all__ = [
     "ProductStatus",
     "RawObservation",
     "Recommendation",
+    "RecommendationFeedback",
     "RunStatus",
     "RuleProfile",
     "SupplierQuote",

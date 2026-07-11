@@ -1,8 +1,10 @@
 export type Recommendation =
+  | "pursue"
   | "strong_opportunity"
   | "investigate"
   | "watch"
   | "needs_more_data"
+  | "insufficient_data"
   | "skip";
 
 export type ValidationDecision = "pursue" | "investigate" | "watch" | "skip";
@@ -21,7 +23,12 @@ export type ProductListItem = {
   status: string;
   latest_score: number | null;
   recommendation: Recommendation | null;
+  opportunity_score: number | null;
+  evidence_confidence_score: number | null;
+  validation_readiness_score: number | null;
+  scoring_version: string | null;
   demand_score: number | null;
+  demand_proxy_score: number | null;
   growth_score: number | null;
   competition_score: number | null;
   margin_score: number | null;
@@ -48,20 +55,45 @@ export type ScoreRecord = {
   product_id: string;
   scoring_version: string;
   demand_score: number;
+  demand_proxy_score?: number | null;
   growth_score: number;
   competition_score: number;
   margin_score: number;
   pain_point_score: number;
   risk_score: number;
   confidence_score: number;
-  final_score: number;
+  final_score: number | null;
+  opportunity_score?: number | null;
+  evidence_confidence_score?: number | null;
+  validation_readiness_score?: number | null;
   recommendation: Recommendation;
+  recommendation_reasons?: string[];
+  missing_evidence?: string[];
+  blocking_issues?: string[];
+  next_actions?: string[];
+  components?: Record<string, ScoreComponent>;
   explanation: string;
   score_breakdown: {
     weights?: Record<string, number>;
     signals?: Record<string, unknown>;
+    components?: Record<string, ScoreComponent>;
+    [key: string]: unknown;
   };
   created_at: string;
+};
+
+export type ScoreComponent = {
+  name: string;
+  value: number | null;
+  status: string;
+  coverage: number;
+  confidence: number;
+  evidence_count: number;
+  freshness_days: number | null;
+  evidence_ids: string[];
+  explanation: string;
+  warnings: string[];
+  metadata: Record<string, unknown>;
 };
 
 export type DiscoverySource = {
@@ -72,17 +104,57 @@ export type DiscoverySource = {
 };
 
 export type ComparableAsin = {
-  asin: string | null;
+  id?: string;
+  product_id?: string;
+  asin: string;
   title: string | null;
   url: string | null;
   price: number | null;
   brand: string | null;
+  product_type?: string | null;
+  category?: string | null;
+  currency?: string | null;
+  dimensions?: Record<string, unknown> | null;
+  weight?: number | null;
+  relevance_score?: number;
+  relevance_status?: string;
+  relevance_reasons?: string[];
+  automatic_relevance_version?: string;
+  manually_overridden?: boolean;
+  manual_override_reason?: string | null;
+  discovered_from_query?: string | null;
+  discovered_at?: string;
+  last_refreshed_at?: string;
+  metadata?: Record<string, unknown>;
   sales_rank?: number | null;
   review_count?: number | null;
   fees?: number | null;
   source: string | null;
-  observed_at: string | null;
+  observed_at?: string | null;
   selected_proxy: boolean;
+};
+
+export type MarketplaceHistoryRow = {
+  id: string;
+  asin: string;
+  observed_at: string;
+  price: number | null;
+  featured_offer_price: number | null;
+  lowest_offer_price: number | null;
+  offer_count: number | null;
+  seller_count: number | null;
+  bestseller_rank: number | null;
+  review_count: number | null;
+  rating: number | null;
+  fee_estimate: number | null;
+  created_at: string;
+};
+
+export type DerivedSignals = {
+  windows: Record<string, Record<string, unknown>>;
+  snapshot_count: number;
+  asin_count: number;
+  latest_observation_at: string | null;
 };
 
 export type CostScenario = {
@@ -290,6 +362,12 @@ export type ProductDetail = {
   recent_observations: Array<Record<string, unknown>>;
   discovery_source: DiscoverySource;
   comparable_asins: ComparableAsin[];
+  comparable_summary: Record<string, unknown>;
+  historical_summary: {
+    snapshot_count: number;
+    derived_signals: DerivedSignals;
+  };
+  marketplace_history: MarketplaceHistoryRow[];
   economics_validator: EconomicsValidator;
   supplier_validation: SupplierValidation;
   constraint_evaluation: ConstraintEvaluation;
@@ -297,7 +375,30 @@ export type ProductDetail = {
   cross_source_confidence_score: number;
   missing_evidence: string[];
   validation_decision: ProductValidation["validation_decision"];
+  recommendation_v2: {
+    opportunity_score?: number | null;
+    evidence_confidence_score?: number | null;
+    validation_readiness_score?: number | null;
+    recommendation?: Recommendation | string | null;
+    recommendation_reasons?: string[];
+    missing_evidence?: string[];
+    blocking_issues?: string[];
+    next_actions?: string[];
+    scoring_version?: string | null;
+    components?: Record<string, ScoreComponent>;
+  };
   paper_trading_history: PaperTrade[];
+};
+
+export type ComparableUpdateInput = {
+  relevance_status: string;
+  reason?: string | null;
+};
+
+export type RecommendationFeedbackInput = {
+  verdict: "good_recommendation" | "bad_recommendation" | "uncertain";
+  reasons?: string[];
+  notes?: string | null;
 };
 
 export type ProductCreateInput = {
@@ -434,6 +535,19 @@ export type PipelineRunResponse = {
   observations_created: number;
   errors: string[];
   message?: string | null;
+};
+
+export type ProductResearchInput = {
+  query: string;
+  category?: string | null;
+};
+
+export type ProductResearchResponse = {
+  product_id: string;
+  canonical_name: string;
+  category: string | null;
+  created: boolean;
+  pipeline: PipelineRunResponse;
 };
 
 export type ProductFilters = {

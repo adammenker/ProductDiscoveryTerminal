@@ -16,6 +16,11 @@ from app.models.mixins import CreatedAtMixin, TimestampMixin
 if TYPE_CHECKING:
     from app.models.insight import ProductInsight
     from app.models.observation import RawObservation
+    from app.models.recommendation import (
+        ComparableAsin,
+        MarketplaceAsinSnapshot,
+        RecommendationFeedback,
+    )
     from app.models.score import OpportunityScore
     from app.models.signal import CostModel, MarketSignal, SupplierSignal
     from app.models.validation import (
@@ -83,6 +88,18 @@ class ProductCandidate(TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
     paper_trades: Mapped[list["PaperTrade"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+    comparable_asins: Mapped[list["ComparableAsin"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+    marketplace_snapshots: Mapped[list["MarketplaceAsinSnapshot"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+    recommendation_feedback: Mapped[list["RecommendationFeedback"]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
     )

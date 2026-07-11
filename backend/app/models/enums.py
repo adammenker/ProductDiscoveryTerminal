@@ -57,8 +57,10 @@ class InsightType(StrEnum):
 
 
 class Recommendation(StrEnum):
+    PURSUE = "pursue"
     INVESTIGATE = "investigate"
     WATCH = "watch"
     SKIP = "skip"
     STRONG_OPPORTUNITY = "strong_opportunity"
     NEEDS_MORE_DATA = "needs_more_data"
+    INSUFFICIENT_DATA = "insufficient_data"

@@ -15,6 +15,7 @@ from app.schemas.plugin import (
     PipelineRunResponse,
     PluginRunSummary,
 )
+from app.services.comparable_service import ComparableService
 from app.services.normalization_service import NormalizationService
 from app.services.scoring_service import ScoringService
 
@@ -47,6 +48,9 @@ class PipelineRunner:
             plugin_run_ids=[run.id for run in plugin_runs],
         )
         product_ids: list[UUID | str] = [str(product.id) for product in updated_products]
+        comparable_service = ComparableService(self.db)
+        for product_id in product_ids:
+            comparable_service.sync_product(product_id)
 
         if request.run_analyzers and product_ids:
             analyzer_runs = AnalyzerRunner(self.db).run(product_ids)

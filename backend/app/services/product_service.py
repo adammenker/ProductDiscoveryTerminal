@@ -19,6 +19,7 @@ from app.models import (
     SupplierSignal,
 )
 from app.schemas.plugin import ProductContext
+from app.services.comparable_service import AMAZON_COMPARABLE_PLUGINS, ComparableService
 
 
 class ProductService:
@@ -90,13 +91,21 @@ class ProductService:
         from app.services.validation_service import ValidationService
 
         validation = ValidationService(self.db)
+        comparable_service = ComparableService(self.db)
+        comparable_service.sync_product(product.id, create_snapshots=False)
         economics = validation.economics(product.id)
         supplier = validation.supplier_validation(product.id)
         constraints = validation.latest_constraint(product.id)
         evidence = validation.evidence_matrix(product.id)
         decision = validation.decision(product.id)
-        comparable_asins = self._comparable_asins(observations, economics.get("comparable_asin"))
+        comparable_asins = [
+            comparable_service.to_dict(row, economics.get("comparable_asin"))
+            for row in comparable_service.list_comparables(product.id, sync=False)
+        ]
+        history = comparable_service.history(product.id)
+        derived_signals = comparable_service.derived_signals(product.id)
         discovery_sources = sorted({item["source"] for item in observations})
+        latest_score = self._score_to_dict(self.latest_score(product.id))
         return {
             "product": {
                 "id": str(product.id),
@@ -109,7 +118,7 @@ class ProductService:
                 "updated_at": product.updated_at,
             },
             "aliases": [self._alias_to_dict(alias) for alias in product.aliases],
-            "latest_score": self._score_to_dict(self.latest_score(product.id)),
+            "latest_score": latest_score,
             "market_signals": [
                 self._market_signal_to_dict(signal)
                 for signal in self.db.scalars(
@@ -154,6 +163,12 @@ class ProductService:
                 "confidence": min(1.0, 0.45 + len(discovery_sources) * 0.1),
             },
             "comparable_asins": comparable_asins,
+            "comparable_summary": comparable_service.comparable_summary(product.id),
+            "historical_summary": {
+                "snapshot_count": len(history),
+                "derived_signals": derived_signals,
+            },
+            "marketplace_history": history[:100],
             "economics_validator": economics,
             "supplier_validation": supplier,
             "constraint_evaluation": constraints,
@@ -161,6 +176,7 @@ class ProductService:
             "cross_source_confidence_score": evidence["cross_source_confidence_score"],
             "missing_evidence": evidence["missing_evidence"],
             "validation_decision": decision,
+            "recommendation_v2": _recommendation_v2(latest_score),
             "paper_trading_history": BacktestService(self.db).list_trades(product.id),
         }
 
@@ -202,6 +218,9 @@ class ProductService:
         )
 
     def _current_observations(self, product_id: uuid.UUID) -> list[RawObservation]:
+        comparable_service = ComparableService(self.db)
+        included_asins = comparable_service.included_asins(product_id)
+        has_comparable_set = comparable_service.has_comparable_set(product_id)
         observations = self.db.scalars(
             select(RawObservation)
             .where(RawObservation.product_id == product_id)
@@ -216,6 +235,15 @@ class ProductService:
         for observation in observations:
             metadata = observation.metadata_ or {}
             asin = metadata.get("asin") or metadata.get("comparable_asin")
+            if not asin and observation.external_id:
+                asin = observation.external_id.split(":", 1)[0]
+            if (
+                has_comparable_set
+                and _is_amazon_comparable_observation(observation)
+                and asin
+                and str(asin).upper().split(":", 1)[0] not in included_asins
+            ):
+                continue
             identity = (
                 str(asin).upper()
                 if asin
@@ -255,7 +283,12 @@ class ProductService:
             "status": product.status.value,
             "latest_score": latest_dict["final_score"] if latest_dict else None,
             "recommendation": latest_dict["recommendation"] if latest_dict else None,
+            "opportunity_score": latest_dict.get("opportunity_score") if latest_dict else None,
+            "evidence_confidence_score": latest_dict.get("evidence_confidence_score") if latest_dict else None,
+            "validation_readiness_score": latest_dict.get("validation_readiness_score") if latest_dict else None,
+            "scoring_version": latest_dict.get("scoring_version") if latest_dict else None,
             "demand_score": latest_dict["demand_score"] if latest_dict else None,
+            "demand_proxy_score": latest_dict.get("demand_proxy_score") if latest_dict else None,
             "growth_score": latest_dict["growth_score"] if latest_dict else None,
             "competition_score": latest_dict["competition_score"] if latest_dict else None,
             "margin_score": latest_dict["margin_score"] if latest_dict else None,
@@ -275,23 +308,43 @@ class ProductService:
     def _score_to_dict(self, score: OpportunityScore | None) -> dict[str, Any] | None:
         if score is None:
             return None
+        breakdown = score.score_breakdown or {}
+        opportunity_score = breakdown.get("opportunity_score", score.final_score)
+        evidence_confidence_score = breakdown.get(
+            "evidence_confidence_score",
+            score.confidence_score,
+        )
+        validation_readiness_score = breakdown.get("validation_readiness_score")
+        recommendation = breakdown.get("recommendation") or (
+            score.recommendation.value
+            if isinstance(score.recommendation, Recommendation)
+            else score.recommendation
+        )
+        components = breakdown.get("components") or {}
         return {
             "id": str(score.id),
             "product_id": str(score.product_id),
             "scoring_version": score.scoring_version,
             "demand_score": score.demand_score,
+            "demand_proxy_score": (components.get("demand_proxy") or {}).get("value", score.demand_score),
             "growth_score": score.growth_score,
             "competition_score": score.competition_score,
             "margin_score": score.margin_score,
             "pain_point_score": score.pain_point_score,
             "risk_score": score.risk_score,
             "confidence_score": score.confidence_score,
-            "final_score": score.final_score,
-            "recommendation": score.recommendation.value
-            if isinstance(score.recommendation, Recommendation)
-            else score.recommendation,
+            "final_score": opportunity_score,
+            "opportunity_score": opportunity_score,
+            "evidence_confidence_score": evidence_confidence_score,
+            "validation_readiness_score": validation_readiness_score,
+            "recommendation": recommendation,
+            "recommendation_reasons": breakdown.get("recommendation_reasons") or [],
+            "missing_evidence": breakdown.get("missing_evidence") or [],
+            "blocking_issues": breakdown.get("blocking_issues") or [],
+            "next_actions": breakdown.get("next_actions") or [],
+            "components": components,
             "explanation": score.explanation,
-            "score_breakdown": score.score_breakdown,
+            "score_breakdown": breakdown,
             "created_at": score.created_at,
         }
 
@@ -441,3 +494,29 @@ class ProductService:
             ):
                 row["observed_at"] = observation["observed_at"]
         return sorted(rows.values(), key=lambda row: (not row["selected_proxy"], row["asin"]))
+
+
+def _is_amazon_comparable_observation(observation: RawObservation) -> bool:
+    evidence_type = (observation.metadata_ or {}).get("evidence_type")
+    return observation.source_plugin in AMAZON_COMPARABLE_PLUGINS or evidence_type in {
+        "amazon_catalog",
+        "amazon_pricing",
+        "amazon_fees",
+    }
+
+
+def _recommendation_v2(score: dict[str, Any] | None) -> dict[str, Any]:
+    if not score:
+        return {}
+    return {
+        "opportunity_score": score.get("opportunity_score"),
+        "evidence_confidence_score": score.get("evidence_confidence_score"),
+        "validation_readiness_score": score.get("validation_readiness_score"),
+        "recommendation": score.get("recommendation"),
+        "recommendation_reasons": score.get("recommendation_reasons") or [],
+        "missing_evidence": score.get("missing_evidence") or [],
+        "blocking_issues": score.get("blocking_issues") or [],
+        "next_actions": score.get("next_actions") or [],
+        "scoring_version": score.get("scoring_version"),
+        "components": score.get("components") or {},
+    }

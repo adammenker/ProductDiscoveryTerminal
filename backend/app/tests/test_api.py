@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.models import ProductCandidate
+from app.schemas.plugin import PipelineRunResponse
 
 
 def test_health_and_plugins(client: TestClient) -> None:
@@ -24,6 +29,48 @@ def test_refresh_existing_is_safe_with_no_candidates(client: TestClient) -> None
         "errors": [],
         "message": "No existing candidates to refresh. Create a candidate in Validator first, then run Amazon research.",
     }
+
+
+def test_research_product_creates_or_reuses_candidate(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    refreshed_product_ids: list[str] = []
+
+    def fake_run_product(self: object, product_id: object) -> PipelineRunResponse:
+        refreshed_product_ids.append(str(product_id))
+        return PipelineRunResponse(
+            status="success",
+            plugin_runs=[],
+            products_updated=1,
+            scores_updated=1,
+            observations_created=0,
+            errors=[],
+        )
+
+    monkeypatch.setattr(
+        "app.api.routes.ingestion.AmazonRefreshPipeline.run_product",
+        fake_run_product,
+    )
+
+    first = client.post(
+        "/ingestion/research",
+        json={"query": " Silicone Sink Strainer ", "category": "Kitchen"},
+    )
+    second = client.post(
+        "/ingestion/research",
+        json={"query": "silicone sink strainer", "category": "kitchen"},
+    )
+
+    assert first.status_code == 200
+    assert first.json()["created"] is True
+    assert first.json()["canonical_name"] == "silicone sink strainer"
+    assert second.status_code == 200
+    assert second.json()["created"] is False
+    assert first.json()["product_id"] == second.json()["product_id"]
+    assert len(refreshed_product_ids) == 2
+    assert db_session.scalar(select(func.count()).select_from(ProductCandidate)) == 1
 
 
 def test_ingestion_products_opportunities_and_detail(client: TestClient) -> None:

@@ -109,3 +109,16 @@ class PipelineRunResponse(BaseModel):
     observations_created: int
     errors: list[str] = Field(default_factory=list)
     message: str | None = None
+
+
+class ProductResearchRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=255)
+    category: str | None = Field(default=None, max_length=120)
+
+
+class ProductResearchResponse(BaseModel):
+    product_id: str
+    canonical_name: str
+    category: str | None = None
+    created: bool
+    pipeline: PipelineRunResponse

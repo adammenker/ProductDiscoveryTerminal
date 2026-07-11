@@ -4,9 +4,9 @@ import type { Recommendation } from "@/types/api";
 
 export function RecommendationBadge({ value }: { value?: Recommendation | string | null }) {
   const tone =
-    value === "strong_opportunity" || value === "investigate"
+    value === "pursue" || value === "strong_opportunity" || value === "investigate"
       ? "border-terminal-green/60 bg-terminal-green/10 text-terminal-green"
-      : value === "watch"
+    : value === "watch"
         ? "border-terminal-amber/60 bg-terminal-amber/10 text-terminal-amber"
         : value === "skip"
           ? "border-terminal-rose/60 bg-terminal-rose/10 text-terminal-rose"
@@ -18,4 +18,3 @@ export function RecommendationBadge({ value }: { value?: Recommendation | string
     </span>
   );
 }
-

@@ -13,7 +13,12 @@ class ProductListItem(BaseModel):
     status: str
     latest_score: float | None = None
     recommendation: str | None = None
+    opportunity_score: float | None = None
+    evidence_confidence_score: float | None = None
+    validation_readiness_score: float | None = None
+    scoring_version: str | None = None
     demand_score: float | None = None
+    demand_proxy_score: float | None = None
     growth_score: float | None = None
     competition_score: float | None = None
     margin_score: float | None = None
@@ -46,6 +51,9 @@ class ProductDetailResponse(BaseModel):
     recent_observations: list[dict[str, Any]] = Field(default_factory=list)
     discovery_source: dict[str, Any] = Field(default_factory=dict)
     comparable_asins: list[dict[str, Any]] = Field(default_factory=list)
+    comparable_summary: dict[str, Any] = Field(default_factory=dict)
+    historical_summary: dict[str, Any] = Field(default_factory=dict)
+    marketplace_history: list[dict[str, Any]] = Field(default_factory=list)
     economics_validator: dict[str, Any] = Field(default_factory=dict)
     supplier_validation: dict[str, Any] = Field(default_factory=dict)
     constraint_evaluation: dict[str, Any] = Field(default_factory=dict)
@@ -53,6 +61,18 @@ class ProductDetailResponse(BaseModel):
     cross_source_confidence_score: float = 0
     missing_evidence: list[str] = Field(default_factory=list)
     validation_decision: dict[str, Any] = Field(default_factory=dict)
+    recommendation_v2: dict[str, Any] = Field(default_factory=dict)
     paper_trading_history: list[dict[str, Any]] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ComparableAsinUpdate(BaseModel):
+    relevance_status: str
+    reason: str | None = None
+
+
+class RecommendationFeedbackCreate(BaseModel):
+    verdict: str
+    reasons: list[str] = Field(default_factory=list)
+    notes: str | None = None

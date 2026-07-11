@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
+from time import sleep
 from typing import Any
 
 from app.core.config import get_settings
@@ -58,9 +59,15 @@ class AmazonPricingSpApiPlugin:
         observations: list[RawObservationDTO] = []
         errors: list[dict[str, str]] = []
         observed_at = datetime.now(UTC)
+        request_interval = max(
+            0.0,
+            float(getattr(settings, "amazon_pricing_request_interval_seconds", 0.0)),
+        )
         with self.client_factory(settings) as client:
-            for asin in asins[: query.limit]:
+            for index, asin in enumerate(asins[: query.limit]):
                 try:
+                    if index and request_interval:
+                        sleep(request_interval)
                     payload = client.get_competitive_pricing_for_asin(asin)
                     observations.append(
                         _pricing_observation(

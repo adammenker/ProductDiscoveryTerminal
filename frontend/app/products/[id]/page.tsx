@@ -19,12 +19,20 @@ import {
   WarningList
 } from "@/components/validation/ValidationCard";
 import { currency, dateTime, percent, titleCase } from "@/lib/format";
-import { useEvaluateConstraints, useProductDetail } from "@/lib/validation-hooks";
+import {
+  useCreateRecommendationFeedback,
+  useEvaluateConstraints,
+  useProductDetail,
+  useUpdateComparable
+} from "@/lib/validation-hooks";
+import type { ComparableAsin } from "@/types/api";
 
 export default function ProductDetailPage() {
   const params = useParams<{ id: string }>();
   const product = useProductDetail(params.id);
   const evaluate = useEvaluateConstraints(params.id);
+  const updateComparable = useUpdateComparable(params.id);
+  const feedback = useCreateRecommendationFeedback(params.id);
 
   if (product.isLoading) return <EmptyState label="Loading product detail" />;
   if (product.isError) return <EmptyState label={`Product detail unavailable: ${product.error.message}`} />;
@@ -37,6 +45,7 @@ export default function ProductDetailPage() {
   const supplier = data.supplier_validation;
   const constraints = data.constraint_evaluation;
   const decision = data.validation_decision;
+  const recommendation = data.recommendation_v2;
 
   return (
     <div className="space-y-6">
@@ -56,29 +65,41 @@ export default function ProductDetailPage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <DecisionBadge value={decision.decision} />
-            <RecommendationBadge value={score?.recommendation} />
-            <ScoreBadge value={score?.final_score} />
+            <RecommendationBadge value={recommendation.recommendation ?? score?.recommendation} />
+            <ScoreBadge value={recommendation.opportunity_score ?? score?.final_score} />
           </div>
         </div>
       </header>
 
       <ValidationWarnings />
 
-      <section className="grid gap-4 lg:grid-cols-[1fr_360px]">
+      <section className="grid gap-4 lg:grid-cols-[1fr_420px]">
         <div className="border border-terminal-line bg-terminal-panel/80 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-mono text-xs uppercase tracking-[0.18em] text-terminal-muted">Opportunity thesis</h2>
-            <span className="font-mono text-xs text-terminal-muted">
-              {data.cross_source_confidence_score}/100 cross-source confidence
-            </span>
+            <h2 className="font-mono text-xs uppercase tracking-[0.18em] text-terminal-muted">Recommendation summary</h2>
+            <DecisionBadge value={recommendation.recommendation ?? decision.decision} />
           </div>
           <p className="mt-3 text-sm leading-7 text-terminal-ink">
-            {decision.thesis || score?.explanation || "No opportunity thesis has been generated."}
+            {score?.explanation || decision.thesis || "No recommendation has been generated."}
           </p>
-          {data.missing_evidence.length ? (
+          <div className="mt-4 grid gap-2 sm:grid-cols-3">
+            <Metric label="Opportunity" value={formatMetric(recommendation.opportunity_score ?? score?.final_score)} />
+            <Metric label="Confidence" value={formatMetric(recommendation.evidence_confidence_score)} />
+            <Metric label="Readiness" value={formatMetric(recommendation.validation_readiness_score)} />
+          </div>
+          {recommendation.next_actions?.length ? (
+            <div className="mt-4 border-t border-terminal-line pt-3">
+              <SectionTitle title="Next actions" />
+              <ul className="space-y-1 text-sm text-terminal-muted">
+                {recommendation.next_actions.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {(recommendation.missing_evidence?.length ?? data.missing_evidence.length) ? (
             <div className="mt-3 flex flex-wrap gap-2">
-              {data.missing_evidence.map((item) => (
+              {(recommendation.missing_evidence ?? data.missing_evidence).map((item) => (
                 <span key={item} className="border border-terminal-amber/40 bg-terminal-amber/5 px-2 py-1 font-mono text-xs text-terminal-amber">
                   {item}
                 </span>
@@ -87,7 +108,7 @@ export default function ProductDetailPage() {
           ) : null}
         </div>
         <div className="border border-terminal-line bg-terminal-panel/80 p-4">
-          <h2 className="mb-4 font-mono text-xs uppercase tracking-[0.18em] text-terminal-muted">Discovery score</h2>
+          <h2 className="mb-4 font-mono text-xs uppercase tracking-[0.18em] text-terminal-muted">Recommendation V2</h2>
           {score ? <ScoreBreakdown score={score} /> : <EmptyState label="No discovery score" />}
         </div>
       </section>
@@ -109,23 +130,31 @@ export default function ProductDetailPage() {
           </div>
 
           <div>
-            <SectionTitle title="Comparable ASINs" />
+            <SectionTitle title="Comparable ASIN Review" />
             {data.comparable_asins.length ? (
               <div className="overflow-x-auto border border-terminal-line bg-terminal-bg">
-                <table className="w-full min-w-[720px] text-left text-sm">
+                <table className="w-full min-w-[1120px] text-left text-sm">
                   <thead className="bg-terminal-panel font-mono text-xs uppercase text-terminal-muted">
                     <tr>
+                      <th className="border-b border-terminal-line px-3 py-2 font-medium">Use</th>
                       <th className="border-b border-terminal-line px-3 py-2 font-medium">ASIN</th>
                       <th className="border-b border-terminal-line px-3 py-2 font-medium">Title</th>
                       <th className="border-b border-terminal-line px-3 py-2 font-medium">Brand</th>
+                      <th className="border-b border-terminal-line px-3 py-2 font-medium">Type</th>
                       <th className="border-b border-terminal-line px-3 py-2 font-medium">Price</th>
-                      <th className="border-b border-terminal-line px-3 py-2 font-medium">Proxy</th>
-                      <th className="border-b border-terminal-line px-3 py-2 font-medium">Source</th>
+                      <th className="border-b border-terminal-line px-3 py-2 font-medium">Relevance</th>
+                      <th className="border-b border-terminal-line px-3 py-2 font-medium">Status</th>
+                      <th className="border-b border-terminal-line px-3 py-2 font-medium">Reasons</th>
+                      <th className="border-b border-terminal-line px-3 py-2 font-medium">Refreshed</th>
+                      <th className="border-b border-terminal-line px-3 py-2 font-medium">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.comparable_asins.map((item, index) => (
                       <tr key={item.asin ?? index} className="border-b border-terminal-line/70 last:border-b-0">
+                        <td className={clsx("px-3 py-2 font-mono text-xs", isIncluded(item) ? "text-terminal-green" : "text-terminal-muted")}>
+                          {isIncluded(item) ? "Included" : "--"}
+                        </td>
                         <td className="px-3 py-2 font-mono text-xs">
                           {item.url ? (
                             <a href={item.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:text-terminal-green">
@@ -135,11 +164,48 @@ export default function ProductDetailPage() {
                         </td>
                         <td className="max-w-[320px] truncate px-3 py-2">{item.title ?? "--"}</td>
                         <td className="px-3 py-2 text-terminal-muted">{item.brand ?? "--"}</td>
+                        <td className="px-3 py-2 text-terminal-muted">{titleCase(item.product_type)}</td>
                         <td className="px-3 py-2 font-mono text-xs">{currency(item.price)}</td>
-                        <td className={clsx("px-3 py-2 font-mono text-xs", item.selected_proxy ? "text-terminal-green" : "text-terminal-muted")}>
-                          {item.selected_proxy ? "Selected" : "--"}
+                        <td className="px-3 py-2 font-mono text-xs tabular-nums">
+                          {item.relevance_score?.toFixed(0) ?? "--"}
                         </td>
-                        <td className="px-3 py-2 text-terminal-muted">{titleCase(item.source)}</td>
+                        <td className="px-3 py-2">
+                          <DecisionBadge value={item.relevance_status} />
+                          {item.manually_overridden ? (
+                            <div className="mt-1 font-mono text-[10px] uppercase text-terminal-muted">Manual</div>
+                          ) : null}
+                        </td>
+                        <td className="max-w-[260px] px-3 py-2 text-xs text-terminal-muted">
+                          {(item.relevance_reasons ?? []).slice(0, 2).join(" / ") || "--"}
+                        </td>
+                        <td className="px-3 py-2 font-mono text-xs text-terminal-muted">
+                          {dateTime(item.last_refreshed_at)}
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="flex flex-wrap gap-1">
+                            <ComparableAction
+                              label="Include"
+                              item={item}
+                              status="included"
+                              pending={updateComparable.isPending}
+                              onClick={(asin, status) => updateComparable.mutate({ asin, input: { relevance_status: status } })}
+                            />
+                            <ComparableAction
+                              label="Exclude"
+                              item={item}
+                              status="excluded_irrelevant"
+                              pending={updateComparable.isPending}
+                              onClick={(asin, status) => updateComparable.mutate({ asin, input: { relevance_status: status, reason: "Manual exclusion from review table" } })}
+                            />
+                            <ComparableAction
+                              label="Reset"
+                              item={item}
+                              status="reset_automatic_decision"
+                              pending={updateComparable.isPending}
+                              onClick={(asin, status) => updateComparable.mutate({ asin, input: { relevance_status: status } })}
+                            />
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -149,6 +215,31 @@ export default function ProductDetailPage() {
               <EmptyState label="No Amazon comparable evidence linked" />
             )}
           </div>
+        </div>
+      </ValidationCard>
+
+      <ValidationCard
+        title="Historical signals"
+        source="marketplace_asin_snapshots"
+        updatedAt={data.historical_summary.derived_signals.latest_observation_at}
+        confidence={null}
+        missing={!data.historical_summary.snapshot_count ? ["Marketplace history"] : []}
+      >
+        <div className="grid gap-3 md:grid-cols-3">
+          {Object.entries(data.historical_summary.derived_signals.windows ?? {}).map(([window, signal]) => (
+            <div key={window} className="border border-terminal-line bg-terminal-bg p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-mono text-xs uppercase text-terminal-muted">{window}</div>
+                <DecisionBadge value={String(signal.status ?? "missing")} />
+              </div>
+              <div className="mt-3 grid gap-1 font-mono text-xs text-terminal-muted">
+                <span>Samples {String(signal.sample_count ?? 0)}</span>
+                <span>Price {formatDelta(signal.price_delta)}</span>
+                <span>BSR {formatDelta(signal.bsr_delta)}</span>
+                <span>Sellers {formatDelta(signal.seller_count_delta)}</span>
+              </div>
+            </div>
+          ))}
         </div>
       </ValidationCard>
 
@@ -292,6 +383,34 @@ export default function ProductDetailPage() {
         </div>
       </ValidationCard>
 
+      <ValidationCard
+        title="Analyst feedback"
+        source="recommendation_feedback"
+        updatedAt={score?.created_at}
+        confidence={null}
+        missing={[]}
+      >
+        <div className="flex flex-wrap gap-2">
+          {[
+            ["Good", "good_recommendation"],
+            ["Bad", "bad_recommendation"],
+            ["Uncertain", "uncertain"]
+          ].map(([label, verdict]) => (
+            <button
+              key={verdict}
+              type="button"
+              disabled={feedback.isPending}
+              onClick={() => feedback.mutate({ verdict: verdict as "good_recommendation" | "bad_recommendation" | "uncertain", reasons: [] })}
+              className="inline-flex h-9 items-center border border-terminal-line bg-terminal-bg px-3 font-mono text-xs uppercase text-terminal-muted hover:border-terminal-green hover:text-terminal-green disabled:opacity-50"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {feedback.isSuccess ? <div className="mt-2 text-xs text-terminal-green">Feedback recorded.</div> : null}
+        {feedback.error ? <div className="mt-2 text-xs text-terminal-rose">{feedback.error.message}</div> : null}
+      </ValidationCard>
+
       <section>
         <SectionTitle title="Raw data views" />
         <div className="border border-terminal-line bg-terminal-panel/50">
@@ -373,4 +492,41 @@ function Metric({
 
 function SectionTitle({ title }: { title: string }) {
   return <h3 className="mb-3 font-mono text-xs uppercase tracking-[0.18em] text-terminal-muted">{title}</h3>;
+}
+
+function ComparableAction({
+  label,
+  item,
+  status,
+  pending,
+  onClick
+}: {
+  label: string;
+  item: ComparableAsin;
+  status: string;
+  pending: boolean;
+  onClick: (asin: string, status: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={pending || !item.asin}
+      onClick={() => onClick(item.asin, status)}
+      className="inline-flex h-7 items-center border border-terminal-line px-2 font-mono text-[10px] uppercase text-terminal-muted hover:border-terminal-green hover:text-terminal-green disabled:opacity-50"
+    >
+      {label}
+    </button>
+  );
+}
+
+function isIncluded(item: ComparableAsin) {
+  return item.relevance_status === "included" || item.relevance_status === "manually_included";
+}
+
+function formatMetric(value?: number | null) {
+  return value == null ? "--" : value.toFixed(0);
+}
+
+function formatDelta(value: unknown) {
+  return typeof value === "number" ? value.toFixed(1) : "--";
 }

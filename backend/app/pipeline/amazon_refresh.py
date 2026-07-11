@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -17,6 +18,7 @@ from app.schemas.plugin import (
     PipelineRunResponse,
     PluginRunSummary,
 )
+from app.services.comparable_service import ComparableService
 from app.services.scoring_service import ScoringService
 
 
@@ -44,6 +46,22 @@ class AmazonRefreshPipeline:
                 message="No existing candidates to refresh. Create a candidate in Validator first, then run Amazon research.",
             )
 
+        return self._run_products(products)
+
+    def run_product(self, product_id: UUID | str) -> PipelineRunResponse:
+        product = self.db.get(ProductCandidate, uuid.UUID(str(product_id)))
+        if product is None:
+            return PipelineRunResponse(
+                status=RunStatus.FAILED.value,
+                plugin_runs=[],
+                products_updated=0,
+                scores_updated=0,
+                observations_created=0,
+                errors=["Product not found"],
+            )
+        return self._run_products([product])
+
+    def _run_products(self, products: list[ProductCandidate]) -> PipelineRunResponse:
         runner = PipelineRunner(self.db)
         summaries: list[PluginRunSummary] = []
         errors: list[str] = []
@@ -75,22 +93,24 @@ class AmazonRefreshPipeline:
                 errors.append(f"{product.canonical_name}: Amazon Catalog returned no comparable ASINs.")
                 continue
 
-            pricing = runner.run(
-                PipelineRunRequest(
-                    plugins=["amazon_pricing_spapi"],
-                    query=IngestionQuery(
-                        query=product.canonical_name,
-                        category=product.category,
-                        limit=pricing_limit,
-                        metadata={"product_id": str(product.id), "asins": asins},
-                    ),
-                    run_analyzers=False,
-                    score=False,
+            pricing_asins = self._pricing_asins(product.id, asins)
+            if pricing_asins:
+                pricing = runner.run(
+                    PipelineRunRequest(
+                        plugins=["amazon_pricing_spapi"],
+                        query=IngestionQuery(
+                            query=product.canonical_name,
+                            category=product.category,
+                            limit=min(pricing_limit, len(pricing_asins)),
+                            metadata={"product_id": str(product.id), "asins": pricing_asins},
+                        ),
+                        run_analyzers=False,
+                        score=False,
+                    )
                 )
-            )
-            observations_created += pricing.observations_created
-            summaries.extend(pricing.plugin_runs)
-            errors.extend(pricing.errors)
+                observations_created += pricing.observations_created
+                summaries.extend(pricing.plugin_runs)
+                errors.extend(pricing.errors)
 
             fee_inputs = self._fee_inputs(product.id, asins)
             if fee_inputs:
@@ -113,6 +133,10 @@ class AmazonRefreshPipeline:
                 observations_created += fees.observations_created
                 summaries.extend(fees.plugin_runs)
                 errors.extend(fees.errors)
+
+        comparable_service = ComparableService(self.db)
+        for product_id in product_ids:
+            comparable_service.sync_product(product_id)
 
         analyzer_runs = AnalyzerRunner(self.db).run(product_ids)
         summaries.extend(_run_summary(run) for run in analyzer_runs)
@@ -153,6 +177,39 @@ class AmazonRefreshPipeline:
             if len(asin) == 10 and asin not in asins:
                 asins.append(asin)
         return asins[:10]
+
+    def _pricing_asins(self, product_id: Any, asins: list[str]) -> list[str]:
+        fresh_asins = self._fresh_pricing_asins(product_id)
+        limit = max(0, min(int(self.settings.amazon_refresh_pricing_limit), len(asins)))
+        inputs: list[str] = []
+        for asin in asins:
+            if asin in fresh_asins:
+                continue
+            inputs.append(asin)
+            if len(inputs) >= limit:
+                break
+        return inputs
+
+    def _fresh_pricing_asins(self, product_id: Any) -> set[str]:
+        cutoff = datetime.now(UTC) - timedelta(
+            hours=max(0.0, float(self.settings.amazon_pricing_cache_ttl_hours))
+        )
+        asins: set[str] = set()
+        for observation in self.db.scalars(
+            select(RawObservation)
+            .where(
+                RawObservation.product_id == product_id,
+                RawObservation.source_plugin == "amazon_pricing_spapi",
+                RawObservation.observed_at >= cutoff,
+            )
+            .order_by(RawObservation.observed_at.desc())
+        ):
+            asin = str((observation.metadata_ or {}).get("asin") or "").upper()
+            if not asin and observation.external_id:
+                asin = observation.external_id.split(":", 1)[0].upper()
+            if len(asin) == 10:
+                asins.add(asin)
+        return asins
 
     def _fee_inputs(self, product_id: Any, asins: list[str]) -> list[dict[str, Any]]:
         prices: dict[str, float] = {}

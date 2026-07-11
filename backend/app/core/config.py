@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     amazon_refresh_catalog_limit: int = 10
     amazon_refresh_pricing_limit: int = 10
     amazon_refresh_fee_limit: int = 5
+    amazon_pricing_cache_ttl_hours: float = 24.0
+    amazon_pricing_request_interval_seconds: float = 1.1
     amazon_fees_cache_ttl_hours: float = 24.0
     amazon_fees_request_interval_seconds: float = 1.1
     cost_ceiling_marketplace_fee_rate: float = 0.15

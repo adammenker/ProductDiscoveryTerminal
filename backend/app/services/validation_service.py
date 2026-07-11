@@ -22,6 +22,7 @@ from app.models import (
     RuleProfile,
     SupplierQuote,
 )
+from app.services.comparable_service import ComparableService
 
 DEFAULT_HARD_RULES = {
     "exclude_batteries": True,
@@ -524,6 +525,9 @@ class ValidationService:
     def _prices(self, product_id: uuid.UUID) -> list[float]:
         values: list[float] = []
         seen: set[tuple[str, str]] = set()
+        comparable_service = ComparableService(self.db)
+        included_asins = comparable_service.included_asins(product_id)
+        has_comparable_set = comparable_service.has_comparable_set(product_id)
         observations = self.db.scalars(
             select(RawObservation)
             .where(RawObservation.product_id == product_id)
@@ -539,6 +543,14 @@ class ValidationService:
                 continue
             metadata = observation.metadata_ or {}
             asin = metadata.get("asin") or metadata.get("comparable_asin")
+            if not asin and observation.external_id:
+                asin = observation.external_id.split(":", 1)[0]
+            if (
+                has_comparable_set
+                and asin
+                and str(asin).upper().split(":", 1)[0] not in included_asins
+            ):
+                continue
             identity = str(asin).upper() if asin else observation.external_id or observation.content_hash
             key = (observation.source_plugin, identity)
             if key in seen:
@@ -572,6 +584,9 @@ class ValidationService:
                 .order_by(CostModel.created_at.desc())
             )
         )
+        comparable_service = ComparableService(self.db)
+        included_asins = comparable_service.included_asins(product_id)
+        has_comparable_set = comparable_service.has_comparable_set(product_id)
         priority = (
             ("amazon_fba_fee_estimate", "amazon_spapi_product_fees", "high"),
             ("manual_amazon_fee_estimate", "manual_amazon_fee_estimate", "medium"),
@@ -579,6 +594,13 @@ class ValidationService:
         )
         for model_name, source, confidence in priority:
             candidates = [item for item in models if item.model_name == model_name]
+            if has_comparable_set:
+                candidates = [
+                    item
+                    for item in candidates
+                    if not item.assumptions.get("comparable_asin")
+                    or str(item.assumptions["comparable_asin"]).upper() in included_asins
+                ]
             if not candidates:
                 continue
             model = (

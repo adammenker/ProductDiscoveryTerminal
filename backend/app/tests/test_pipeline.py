@@ -9,17 +9,17 @@ from app.models import (
     CostModel,
     MarketSignal,
     ObservationEntityType,
+    PluginRun,
+    PluginType,
     ProductAlias,
     ProductCandidate,
     ProductInsight,
     ProductStatus,
-    PluginRun,
-    PluginType,
     RawObservation,
     RunStatus,
 )
-from app.pipeline.analyzer_runner import AnalyzerRunner
 from app.pipeline.amazon_refresh import AmazonRefreshPipeline
+from app.pipeline.analyzer_runner import AnalyzerRunner
 from app.pipeline.runner import PipelineRunner
 from app.schemas.plugin import IngestionQuery, PipelineRunRequest, RawObservationDTO
 
@@ -252,8 +252,13 @@ def test_amazon_refresh_reuses_fresh_fee_estimates(db_session: Session) -> None:
 
     pipeline = AmazonRefreshPipeline(db_session)
     pipeline.settings.amazon_refresh_fee_limit = 5
+    pipeline.settings.amazon_refresh_pricing_limit = 10
+    pipeline.settings.amazon_pricing_cache_ttl_hours = 24
     pipeline.settings.amazon_fees_cache_ttl_hours = 24
 
+    assert pipeline._pricing_asins(product.id, ["B000TEST01", "B000TEST02", "B000TEST03"]) == [
+        "B000TEST03"
+    ]
     assert pipeline._fee_inputs(product.id, ["B000TEST01", "B000TEST02"]) == [
         {"asin": "B000TEST02", "modeled_price": 12.99}
     ]

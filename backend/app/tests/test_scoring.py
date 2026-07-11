@@ -52,5 +52,6 @@ def test_pipeline_scores_explainable_opportunity(db_session) -> None:  # type: i
 
     assert total == 7
     assert items[0]["canonical_name"] == "facial ice roller"
-    assert items[0]["recommendation"] == "watch"
-    assert "recommendation" in items[0]["explanation"]
+    assert items[0]["recommendation"] == "insufficient_data"
+    assert items[0]["scoring_version"] == "recommendation_v2"
+    assert "recommendation_v2" in items[0]["explanation"]
