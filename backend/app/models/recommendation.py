@@ -36,6 +36,9 @@ class ComparableAsin(TimestampMixin, Base):
     brand: Mapped[str | None] = mapped_column(String(255), nullable=True)
     product_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
     category: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    seed_category: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    amazon_category: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    amazon_product_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
     currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
     dimensions: Mapped[dict | None] = mapped_column(json_type(), nullable=True)
@@ -61,8 +64,15 @@ class ComparableAsin(TimestampMixin, Base):
 class MarketplaceAsinSnapshot(CreatedAtMixin, Base):
     __tablename__ = "marketplace_asin_snapshots"
     __table_args__ = (
+        UniqueConstraint(
+            "product_id",
+            "comparable_asin_id",
+            "snapshot_cohort_id",
+            name="uq_marketplace_snapshot_product_comparable_cohort",
+        ),
         Index("ix_marketplace_asin_snapshots_product_observed", "product_id", "observed_at"),
         Index("ix_marketplace_asin_snapshots_asin_observed", "asin", "observed_at"),
+        Index("ix_marketplace_asin_snapshots_product_cohort", "product_id", "snapshot_cohort_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
@@ -78,6 +88,8 @@ class MarketplaceAsinSnapshot(CreatedAtMixin, Base):
         nullable=True,
         index=True,
     )
+    snapshot_cohort_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True, index=True)
+    observation_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     asin: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -87,6 +99,9 @@ class MarketplaceAsinSnapshot(CreatedAtMixin, Base):
     seller_count: Mapped[float | None] = mapped_column(Float, nullable=True)
     bestseller_rank: Mapped[float | None] = mapped_column(Float, nullable=True)
     bestseller_category: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    rank_category: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    browse_node: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    rank_classification: Mapped[str | None] = mapped_column(String(120), nullable=True)
     review_count: Mapped[float | None] = mapped_column(Float, nullable=True)
     rating: Mapped[float | None] = mapped_column(Float, nullable=True)
     fee_estimate: Mapped[float | None] = mapped_column(Float, nullable=True)

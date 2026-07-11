@@ -74,7 +74,12 @@ def update_comparable(
         relevance_status=payload.relevance_status,
         reason=payload.reason,
     )
-    ScoringService(db).score_product(product_id)
+    if row.relevance_status == "manually_included":
+        AmazonRefreshPipeline(db).run_product(product_id)
+        rows = service.list_comparables(product_id, sync=False)
+        row = next(item for item in rows if item.asin == asin.upper())
+    else:
+        ScoringService(db).score_product(product_id)
     return service.to_dict(row)
 
 

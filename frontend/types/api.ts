@@ -113,6 +113,9 @@ export type ComparableAsin = {
   brand: string | null;
   product_type?: string | null;
   category?: string | null;
+  seed_category?: string | null;
+  amazon_category?: string | null;
+  amazon_product_type?: string | null;
   currency?: string | null;
   dimensions?: Record<string, unknown> | null;
   weight?: number | null;
@@ -136,6 +139,8 @@ export type ComparableAsin = {
 
 export type MarketplaceHistoryRow = {
   id: string;
+  snapshot_cohort_id: string | null;
+  observation_fingerprint: string | null;
   asin: string;
   observed_at: string;
   price: number | null;
@@ -144,14 +149,46 @@ export type MarketplaceHistoryRow = {
   offer_count: number | null;
   seller_count: number | null;
   bestseller_rank: number | null;
+  bestseller_category?: string | null;
+  rank_category?: string | null;
+  browse_node?: string | null;
+  rank_classification?: string | null;
   review_count: number | null;
   rating: number | null;
   fee_estimate: number | null;
   created_at: string;
 };
 
+export type HistoricalChange = {
+  start?: number | null;
+  end?: number | null;
+  absolute_change: number | null;
+  percent_change: number | null;
+};
+
+export type HistoricalSignalWindow = {
+  window_days: number;
+  sample_count: number;
+  cohort_count?: number;
+  coverage: number;
+  status: string;
+  confidence?: number;
+  latest_observation_at: string | null;
+  cohort_change?: Record<string, HistoricalChange>;
+  matched_asin_change?: Record<string, HistoricalChange | number>;
+  comparable_churn?: {
+    added_asin_count?: number;
+    removed_asin_count?: number;
+    retained_asin_count?: number;
+    starting_cohort_size?: number;
+    ending_cohort_size?: number;
+    churn_percent?: number | null;
+  };
+  [key: string]: unknown;
+};
+
 export type DerivedSignals = {
-  windows: Record<string, Record<string, unknown>>;
+  windows: Record<string, HistoricalSignalWindow>;
   snapshot_count: number;
   asin_count: number;
   latest_observation_at: string | null;
@@ -188,6 +225,13 @@ export type EconomicsValidator = {
   price_range: { low: number | null; modeled: number | null; high: number | null };
   fee_source: string | null;
   fee_source_confidence: number | string | null;
+  fee_provenance?: {
+    fee_source?: string;
+    modeled_price_source?: string;
+    comparable_asin?: string | null;
+    status?: string;
+    confidence?: string | number;
+  };
   amazon_fees: number | null;
   comparable_asin: string | null;
   assumptions: Record<string, unknown>;
@@ -253,9 +297,12 @@ export type ConstraintEvaluation = {
   hard_failures: ConstraintMessage[];
   soft_warnings: ConstraintMessage[];
   risk_flags: RiskFlag[];
-  constraint_score: number;
+  constraint_score: number | null;
   eligible: boolean;
   explanation: string;
+  evaluation_status?: string;
+  evaluation_version?: string | null;
+  evaluated_at?: string | null;
   created_at: string | null;
 };
 
@@ -362,11 +409,13 @@ export type ProductDetail = {
   recent_observations: Array<Record<string, unknown>>;
   discovery_source: DiscoverySource;
   comparable_asins: ComparableAsin[];
+  effective_comparables: ComparableAsin[];
   comparable_summary: Record<string, unknown>;
   historical_summary: {
     snapshot_count: number;
     derived_signals: DerivedSignals;
   };
+  historical_signals: DerivedSignals;
   marketplace_history: MarketplaceHistoryRow[];
   economics_validator: EconomicsValidator;
   supplier_validation: SupplierValidation;
@@ -397,7 +446,7 @@ export type ComparableUpdateInput = {
 
 export type RecommendationFeedbackInput = {
   verdict: "good_recommendation" | "bad_recommendation" | "uncertain";
-  reasons?: string[];
+  reasons: string[];
   notes?: string | null;
 };
 

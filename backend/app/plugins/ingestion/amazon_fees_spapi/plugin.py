@@ -65,7 +65,7 @@ class AmazonFeesSpApiPlugin:
             float(getattr(settings, "amazon_fees_request_interval_seconds", 0.0)),
         )
         with self.client_factory(settings) as client:
-            for index, (asin, modeled_price) in enumerate(requests[: query.limit]):
+            for index, (asin, modeled_price, modeled_price_source) in enumerate(requests[: query.limit]):
                 try:
                     if index and request_interval:
                         sleep(request_interval)
@@ -74,10 +74,12 @@ class AmazonFeesSpApiPlugin:
                         _fees_observation(
                             asin=asin,
                             modeled_price=modeled_price,
+                            modeled_price_source=modeled_price_source,
                             payload=payload,
                             observed_at=observed_at,
                             marketplace_id=settings.amazon_marketplace_id,
                             environment=settings.amazon_sp_api_environment,
+                            store_raw_payloads=bool(settings.store_raw_amazon_payloads),
                         )
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -99,10 +101,12 @@ def _fees_observation(
     *,
     asin: str,
     modeled_price: float,
+    modeled_price_source: str,
     payload: dict[str, Any],
     observed_at: datetime,
     marketplace_id: str,
     environment: str,
+    store_raw_payloads: bool,
 ) -> RawObservationDTO:
     result = _fees_result(payload)
     estimate = _dict_value(result, "FeesEstimate")
@@ -130,6 +134,8 @@ def _fees_observation(
 
     identifier = _dict_value(result, "FeesEstimateIdentifier")
     currency = _currency(estimate.get("TotalFeesEstimate"), fee_components) or "USD"
+    confidence = "medium" if modeled_price_source == "configured_default" else "high"
+    raw_payload = {"raw_fees_response": payload} if store_raw_payloads else {}
     return RawObservationDTO(
         source="amazon_sp_api",
         source_plugin=AmazonFeesSpApiPlugin.name,
@@ -146,8 +152,13 @@ def _fees_observation(
         },
         metadata={
             "evidence_type": "amazon_fees",
+            "schema_version": "amazon_fees_normalized_v2",
             "model_name": "amazon_fba_fee_estimate",
             "fee_estimate_source": "amazon_spapi_product_fees",
+            "fee_source": "amazon_product_fees",
+            "status": "live_spapi",
+            "confidence": confidence,
+            "modeled_price_source": modeled_price_source,
             "comparable_asin": asin,
             "asin": asin,
             "fee_estimate_id": identifier.get("Identifier") or identifier.get("identifier"),
@@ -157,12 +168,14 @@ def _fees_observation(
             "estimate_confidence": "proxy_asin",
             "currency": currency,
             "disclaimer": "Estimated from comparable ASINs, not guaranteed actual fees.",
-            "raw_fees_response": payload,
+            "retrieved_at": observed_at.isoformat(),
+            "raw_payload_stored": store_raw_payloads,
+            **raw_payload,
         },
     )
 
 
-def _fee_requests(metadata: dict[str, Any], settings: Any) -> list[tuple[str, float]]:
+def _fee_requests(metadata: dict[str, Any], settings: Any) -> list[tuple[str, float, str]]:
     raw_asins = metadata.get("asins")
     if raw_asins is None:
         raw_asins = metadata.get("comparable_asins")
@@ -180,18 +193,32 @@ def _fee_requests(metadata: dict[str, Any], settings: Any) -> list[tuple[str, fl
     if not isinstance(modeled_prices, dict):
         modeled_prices = {}
 
-    requests: list[tuple[str, float]] = []
+    requests: list[tuple[str, float, str]] = []
     for value in raw_asins:
         row_price: Any = None
+        row_price_source = "configured_default"
         if isinstance(value, dict):
             row_price = value.get("modeled_price") or value.get("price")
+            if row_price is not None:
+                row_price_source = str(value.get("modeled_price_source") or "amazon_pricing")
             value = value.get("asin") or value.get("ASIN")
         asin = str(value).strip().upper().split(":", 1)[0] if value else ""
         if not re.fullmatch(r"[A-Z0-9]{10}", asin):
             continue
-        if not asin or any(existing_asin == asin for existing_asin, _ in requests):
+        if not asin or any(existing_asin == asin for existing_asin, _, _ in requests):
             continue
-        price = row_price if row_price is not None else modeled_prices.get(asin, default_price)
+        if row_price is not None:
+            price = row_price
+            price_source = row_price_source
+        elif asin in modeled_prices:
+            price = modeled_prices[asin]
+            price_source = "amazon_pricing"
+        elif metadata.get("modeled_price") is not None:
+            price = default_price
+            price_source = str(metadata.get("modeled_price_source") or "manual")
+        else:
+            price = default_price
+            price_source = "configured_default"
         if price is None:
             continue
         try:
@@ -199,7 +226,7 @@ def _fee_requests(metadata: dict[str, Any], settings: Any) -> list[tuple[str, fl
         except (TypeError, ValueError):
             continue
         if numeric_price > 0:
-            requests.append((asin, numeric_price))
+            requests.append((asin, numeric_price, price_source))
     return requests
 
 

@@ -94,9 +94,9 @@ export default function DashboardPage() {
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="Scored products" value={productsQuery.data?.total ?? 0} />
-        <Metric label="Pursue" value={metrics.pursue} tone="green" />
-        <Metric label="Needs quote" value={metrics.needsQuote} tone="amber" />
-        <Metric label="Blocked" value={metrics.blocked} tone="rose" />
+        <Metric label="Investigate" value={metrics.investigate} tone="green" />
+        <Metric label="Needs comparable review" value={metrics.needsComparableReview} tone="amber" />
+        <Metric label="Insufficient data" value={metrics.insufficientData} tone="rose" />
       </div>
 
       {productsQuery.isError ? (
@@ -307,18 +307,12 @@ function ProductTable({
 
 function buildMetrics(products: ProductListItem[]) {
   return {
-    pursue: products.filter((product) => product.validation_decision === "pursue").length,
-    needsQuote: products.filter(
-      (product) =>
-        product.supplier_validation_decision === "needs_supplier_quote" ||
-        product.economics_decision === "needs_supplier_quote"
-    ).length,
-    blocked: products.filter(
-      (product) =>
-        product.constraint_eligible === false ||
-        product.validation_decision === "skip" ||
-        product.economics_decision === "quote_above_ceiling" ||
-        product.supplier_validation_decision === "quote_above_ceiling"
+    investigate: products.filter((product) => product.recommendation === "investigate").length,
+    watch: products.filter((product) => product.recommendation === "watch").length,
+    skip: products.filter((product) => product.recommendation === "skip").length,
+    insufficientData: products.filter((product) => product.recommendation === "insufficient_data").length,
+    needsComparableReview: products.filter((product) =>
+      product.missing_evidence.some((item) => item.toLowerCase().includes("comparable"))
     ).length
   };
 }

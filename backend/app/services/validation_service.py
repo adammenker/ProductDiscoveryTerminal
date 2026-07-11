@@ -69,7 +69,7 @@ class ValidationService:
         product = self._product(product_id)
         prices = self._prices(product.id)
         modeled_price = round(float(median_high(prices)), 2) if prices else None
-        fee_source, fee_confidence, amazon_fees, comparable_asin = self._fees(product.id, modeled_price)
+        fee_source, fee_confidence, amazon_fees, comparable_asin, fee_provenance = self._fees(product.id, modeled_price)
         quote = self.best_quote(product.id)
         result = calculate_cost_ceiling_v2(
             selling_price=modeled_price,
@@ -92,8 +92,10 @@ class ValidationService:
             ),
         )
         warnings = []
-        if fee_source != "amazon_spapi_product_fees":
-            warnings.append("Amazon fees use configurable estimates until Product Fees access succeeds.")
+        if fee_source == "configurable_defaults":
+            warnings.append("Amazon fees use configurable fallback assumptions until an included ASIN has a live Product Fees estimate.")
+        elif fee_source != "amazon_spapi_product_fees":
+            warnings.append("Amazon fees use non-SP-API estimates.")
         elif comparable_asin:
             warnings.append("Estimated from comparable ASINs, not guaranteed actual fees.")
         if quote is None:
@@ -116,6 +118,7 @@ class ValidationService:
             },
             "fee_source": fee_source,
             "fee_source_confidence": fee_confidence,
+            "fee_provenance": fee_provenance,
             "amazon_fees": amazon_fees,
             "comparable_asin": comparable_asin,
             "assumptions": assumptions,
@@ -263,6 +266,9 @@ class ValidationService:
             "constraint_score": score,
             "eligible": eligible,
             "explanation": explanation,
+            "evaluation_status": "completed",
+            "evaluation_version": "risk_rules_v1",
+            "evaluated_at": datetime.now(UTC),
             "created_at": datetime.now(UTC),
         }
         if persist:
@@ -275,6 +281,9 @@ class ValidationService:
                 constraint_score=score,
                 eligible=eligible,
                 explanation=explanation,
+                evaluation_status="completed",
+                evaluation_version="risk_rules_v1",
+                evaluated_at=payload["evaluated_at"],
             )
             self.db.add(evaluation)
             self.db.commit()
@@ -292,7 +301,22 @@ class ValidationService:
             .limit(1)
         )
         if evaluation is None:
-            return self.evaluate_constraints(product.id, persist=False)
+            profile = self.default_profile()
+            return {
+                "id": None,
+                "rule_profile_id": str(profile.id),
+                "rule_profile_name": profile.name,
+                "hard_failures": [],
+                "soft_warnings": [],
+                "risk_flags": [],
+                "constraint_score": None,
+                "eligible": True,
+                "explanation": "Constraint evaluation has not been run.",
+                "evaluation_status": "missing",
+                "evaluation_version": None,
+                "evaluated_at": None,
+                "created_at": None,
+            }
         return {
             "id": str(evaluation.id),
             "rule_profile_id": str(evaluation.rule_profile_id),
@@ -303,6 +327,9 @@ class ValidationService:
             "constraint_score": evaluation.constraint_score,
             "eligible": evaluation.eligible,
             "explanation": evaluation.explanation,
+            "evaluation_status": evaluation.evaluation_status,
+            "evaluation_version": evaluation.evaluation_version,
+            "evaluated_at": evaluation.evaluated_at,
             "created_at": evaluation.created_at,
         }
 
@@ -330,6 +357,13 @@ class ValidationService:
             if any(token in item.source.lower() for token in ("reddit", "trend", "manual", "etsy"))
         ]
         prices = self._prices(product.id)
+        comparable_service = ComparableService(self.db)
+        comparable_rows = comparable_service.list_comparables(product.id, sync=False)
+        needs_review_with_fees = any(
+            row.relevance_status == "needs_review"
+            and (row.metadata_ or {}).get("fee_estimate") is not None
+            for row in comparable_rows
+        )
         stale_observations = [
             item
             for item in observations
@@ -339,15 +373,15 @@ class ValidationService:
         conflicting_prices = bool(
             len(prices) >= 2 and min(prices) > 0 and max(prices) / min(prices) >= 1.5
         )
-        has_valid_fee_source = economics.get("fee_source") != "configurable_defaults"
+        has_valid_fee_source = economics.get("fee_source") not in {"configurable_defaults", "missing"}
         rows = [
             self._evidence_row("Discovery Source", bool(observations), len(sources), "Candidate source coverage."),
             self._evidence_row("Amazon Demand", bool(amazon_obs), len(amazon_obs), "Amazon observations found."),
             self._evidence_row(
                 "Amazon Competition",
-                any((item.metrics or {}).get("seller_count") is not None for item in amazon_obs),
+                any((item.metrics or {}).get("offer_count") is not None for item in amazon_obs),
                 len(amazon_obs),
-                "Seller and review competition evidence.",
+                "Offer-density and review competition evidence.",
             ),
             self._evidence_row(
                 "Amazon Pricing",
@@ -404,7 +438,10 @@ class ValidationService:
         if not supplier["quotes"]:
             missing.append("Need supplier quote")
         if economics.get("fee_source") != "amazon_spapi_product_fees":
-            missing.append("Need live Amazon fee estimate")
+            if needs_review_with_fees:
+                missing.append("Approve comparable ASINs with existing Amazon fee estimates")
+            else:
+                missing.append("Need live Amazon fee estimate for an included comparable")
         if not external:
             missing.append("Need non-Amazon trend signal")
         if not pain:
@@ -526,7 +563,7 @@ class ValidationService:
         values: list[float] = []
         seen: set[tuple[str, str]] = set()
         comparable_service = ComparableService(self.db)
-        included_asins = comparable_service.included_asins(product_id)
+        effective_asins = comparable_service.included_asins(product_id)
         has_comparable_set = comparable_service.has_comparable_set(product_id)
         observations = self.db.scalars(
             select(RawObservation)
@@ -548,7 +585,7 @@ class ValidationService:
             if (
                 has_comparable_set
                 and asin
-                and str(asin).upper().split(":", 1)[0] not in included_asins
+                and str(asin).upper().split(":", 1)[0] not in effective_asins
             ):
                 continue
             identity = str(asin).upper() if asin else observation.external_id or observation.content_hash
@@ -576,7 +613,7 @@ class ValidationService:
         self,
         product_id: uuid.UUID,
         modeled_price: float | None,
-    ) -> tuple[str, str, float | None, str | None]:
+    ) -> tuple[str, str, float | None, str | None, dict[str, Any]]:
         models = list(
             self.db.scalars(
                 select(CostModel)
@@ -585,7 +622,7 @@ class ValidationService:
             )
         )
         comparable_service = ComparableService(self.db)
-        included_asins = comparable_service.included_asins(product_id)
+        effective_asins = comparable_service.included_asins(product_id)
         has_comparable_set = comparable_service.has_comparable_set(product_id)
         priority = (
             ("amazon_fba_fee_estimate", "amazon_spapi_product_fees", "high"),
@@ -599,7 +636,7 @@ class ValidationService:
                     item
                     for item in candidates
                     if not item.assumptions.get("comparable_asin")
-                    or str(item.assumptions["comparable_asin"]).upper() in included_asins
+                    or str(item.assumptions["comparable_asin"]).upper() in effective_asins
                 ]
             if not candidates:
                 continue
@@ -621,15 +658,33 @@ class ValidationService:
                 continue
             fees = float(total_fees) if total_fees is not None else sum(component_fees)
             comparable_asin = model.assumptions.get("comparable_asin")
-            return source, confidence, round(fees, 2), comparable_asin
+            return source, confidence, round(fees, 2), comparable_asin, {
+                "fee_source": "amazon_product_fees" if source == "amazon_spapi_product_fees" else source,
+                "modeled_price_source": model.assumptions.get("modeled_price_source") or "amazon_pricing",
+                "comparable_asin": comparable_asin,
+                "status": "live_spapi" if source == "amazon_spapi_product_fees" else "comparable_proxy",
+                "confidence": confidence,
+            }
         if modeled_price is None:
-            return "configurable_defaults", "low", None, None
+            return "missing", "low", None, None, {
+                "fee_source": "missing",
+                "modeled_price_source": "missing",
+                "comparable_asin": None,
+                "status": "missing",
+                "confidence": "low",
+            }
         marketplace = modeled_price * self.settings.cost_ceiling_marketplace_fee_rate
         fulfillment = max(
             self.settings.cost_ceiling_fulfillment_fee_floor,
             modeled_price * self.settings.cost_ceiling_fulfillment_fee_rate,
         )
-        return "configurable_defaults", "low", round(marketplace + fulfillment, 2), None
+        return "configurable_defaults", "low", round(marketplace + fulfillment, 2), None, {
+            "fee_source": "configured_defaults",
+            "modeled_price_source": "modeled_price",
+            "comparable_asin": None,
+            "status": "configured_fallback",
+            "confidence": "low",
+        }
 
     def _risk_text(
         self,

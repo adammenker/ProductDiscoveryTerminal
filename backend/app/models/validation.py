@@ -77,6 +77,9 @@ class ConstraintEvaluation(CreatedAtMixin, Base):
     constraint_score: Mapped[float] = mapped_column(Float, nullable=False)
     eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, index=True)
     explanation: Mapped[str] = mapped_column(Text, nullable=False)
+    evaluation_status: Mapped[str] = mapped_column(String(32), default="completed", nullable=False)
+    evaluation_version: Mapped[str] = mapped_column(String(80), default="risk_rules_v1", nullable=False)
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     product: Mapped["ProductCandidate"] = relationship(back_populates="constraint_evaluations")
     rule_profile: Mapped[RuleProfile] = relationship()

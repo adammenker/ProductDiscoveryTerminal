@@ -135,7 +135,7 @@ def test_amazon_sp_api_environment_selects_expected_endpoint() -> None:
 def test_amazon_plugin_failure_is_captured_by_pipeline(db_session) -> None:  # type: ignore[no-untyped-def]
     result = PipelineRunner(db_session).run(
         PipelineRunRequest(
-            plugins=["amazon_sp_api"],
+            plugins=["amazon_catalog_spapi"],
             query=IngestionQuery(query="ice roller", limit=1),
             run_analyzers=False,
             score=False,
@@ -143,6 +143,6 @@ def test_amazon_plugin_failure_is_captured_by_pipeline(db_session) -> None:  # t
     )
 
     assert result.status == "failed"
-    assert result.plugin_runs[0].plugin_name == "amazon_sp_api"
+    assert result.plugin_runs[0].plugin_name == "amazon_catalog_spapi"
     assert result.plugin_runs[0].status == "failed"
-    assert "amazon_sp_api is disabled" in result.errors[0]
+    assert "amazon_catalog_spapi is disabled" in result.errors[0]

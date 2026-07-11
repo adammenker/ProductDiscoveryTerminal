@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 import uuid
@@ -47,7 +49,8 @@ class ComparableService:
         self,
         product_id: uuid.UUID | str,
         *,
-        create_snapshots: bool = True,
+        create_snapshots: bool = False,
+        price_aware: bool = True,
     ) -> list[ComparableAsin]:
         product = self._product(product_id)
         observations = list(
@@ -67,16 +70,35 @@ class ComparableService:
                 select(ComparableAsin).where(ComparableAsin.product_id == product.id)
             )
         }
-        price_median = _safe_median(
-            row["price"]
-            for row in aggregate.values()
-            if row.get("price") is not None and float(row["price"]) > 0
+        conceptual_relevance = {
+            asin: self._relevance(product, row, None, 0)
+            for asin, row in aggregate.items()
+        }
+        price_sample_count = len(
+            [
+                row
+                for asin, row in aggregate.items()
+                if conceptual_relevance[asin]["status"] in {"included", "needs_review"}
+                and row.get("price") is not None
+                and float(row["price"]) > 0
+            ]
+        )
+        price_median = (
+            _safe_median(
+                row["price"]
+                for asin, row in aggregate.items()
+                if conceptual_relevance[asin]["status"] in {"included", "needs_review"}
+                and row.get("price") is not None
+                and float(row["price"]) > 0
+            )
+            if price_aware
+            else None
         )
 
         rows: list[ComparableAsin] = []
         for asin, row in aggregate.items():
             comparable = existing.get(asin)
-            relevance = self._relevance(product, row, price_median)
+            relevance = self._relevance(product, row, price_median, price_sample_count)
             now = datetime.now(UTC)
             if comparable is None:
                 comparable = ComparableAsin(
@@ -101,6 +123,10 @@ class ComparableService:
                 "latest_source_observation_ids": row.get("source_observation_ids") or [],
                 "price_median_at_relevance": price_median,
                 "bestseller_rank": row.get("bestseller_rank"),
+                "bestseller_ranks": row.get("bestseller_ranks") or [],
+                "rank_category": row.get("rank_category"),
+                "browse_node": row.get("browse_node"),
+                "rank_classification": row.get("rank_classification"),
                 "featured_offer_price": row.get("featured_offer_price"),
                 "lowest_offer_price": row.get("lowest_offer_price"),
                 "offer_count": row.get("offer_count"),
@@ -122,18 +148,8 @@ class ComparableService:
         self.db.commit()
         for comparable_row in rows:
             self.db.refresh(comparable_row)
-            if create_snapshots and comparable_row.relevance_status in INCLUDED_RELEVANCE_STATUSES:
-                aggregate_row = aggregate[comparable_row.asin]
-                if _has_snapshot_value(aggregate_row):
-                    self.db.add(
-                        _snapshot_from_row(
-                            product.id,
-                            comparable_row.id,
-                            comparable_row.asin,
-                            aggregate_row,
-                        )
-                    )
-        self.db.commit()
+        if create_snapshots:
+            self.create_snapshot_cohort(product.id, aggregate=aggregate)
         return self.list_comparables(product.id, sync=False)
 
     def list_comparables(
@@ -157,12 +173,89 @@ class ComparableService:
         )
 
     def included_asins(self, product_id: uuid.UUID | str) -> set[str]:
-        rows = self.list_comparables(product_id, sync=False)
-        return {
-            row.asin.upper()
+        return {row.asin.upper() for row in self.get_effective_comparables(product_id)}
+
+    def get_effective_comparables(
+        self,
+        product_id: uuid.UUID | str,
+        *,
+        sync: bool = False,
+    ) -> list[ComparableAsin]:
+        rows = self.list_comparables(product_id, sync=sync)
+        return [
+            row
             for row in rows
             if row.relevance_status in INCLUDED_RELEVANCE_STATUSES
-        }
+        ]
+
+    def pricing_candidate_asins(self, product_id: uuid.UUID | str) -> list[str]:
+        return [
+            row.asin
+            for row in self.list_comparables(product_id, sync=False)
+            if row.relevance_status in {"included", "needs_review", "manually_included"}
+        ]
+
+    def create_snapshot_cohort(
+        self,
+        product_id: uuid.UUID | str,
+        *,
+        aggregate: dict[str, dict[str, Any]] | None = None,
+        snapshot_cohort_id: uuid.UUID | None = None,
+    ) -> dict[str, Any]:
+        product = self._product(product_id)
+        if aggregate is None:
+            observations = list(
+                self.db.scalars(
+                    select(RawObservation)
+                    .where(RawObservation.product_id == product.id)
+                    .order_by(RawObservation.observed_at.asc(), RawObservation.created_at.asc())
+                )
+            )
+            aggregate = self._aggregate_observations(observations)
+        effective = self.get_effective_comparables(product.id, sync=False)
+        cohort_rows = [
+            (row, aggregate.get(row.asin))
+            for row in effective
+            if aggregate.get(row.asin) and _has_snapshot_value(aggregate[row.asin])
+        ]
+        if not cohort_rows:
+            return {"snapshot_cohort_id": None, "snapshots_created": 0}
+
+        fingerprints = [
+            _observation_fingerprint(aggregate_row or {})
+            for _, aggregate_row in cohort_rows
+        ]
+        cohort_id = snapshot_cohort_id or uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"product-discovery-terminal:{product.id}:{'|'.join(sorted(fingerprints))}",
+        )
+        created = 0
+        for comparable_row, aggregate_row in cohort_rows:
+            assert aggregate_row is not None
+            exists = self.db.scalar(
+                select(MarketplaceAsinSnapshot.id)
+                .where(
+                    MarketplaceAsinSnapshot.product_id == product.id,
+                    MarketplaceAsinSnapshot.comparable_asin_id == comparable_row.id,
+                    MarketplaceAsinSnapshot.snapshot_cohort_id == cohort_id,
+                )
+                .limit(1)
+            )
+            if exists is not None:
+                continue
+            self.db.add(
+                _snapshot_from_row(
+                    product.id,
+                    comparable_row.id,
+                    comparable_row.asin,
+                    aggregate_row,
+                    snapshot_cohort_id=cohort_id,
+                    observation_fingerprint=_observation_fingerprint(aggregate_row),
+                )
+            )
+            created += 1
+        self.db.commit()
+        return {"snapshot_cohort_id": str(cohort_id), "snapshots_created": created}
 
     def has_comparable_set(self, product_id: uuid.UUID | str) -> bool:
         return bool(self.list_comparables(product_id, sync=False))
@@ -274,6 +367,9 @@ class ComparableService:
             "brand": comparable.brand,
             "product_type": comparable.product_type,
             "category": comparable.category,
+            "seed_category": comparable.seed_category,
+            "amazon_category": comparable.amazon_category,
+            "amazon_product_type": comparable.amazon_product_type,
             "price": comparable.price,
             "currency": comparable.currency,
             "dimensions": comparable.dimensions,
@@ -337,8 +433,11 @@ class ComparableService:
             if evidence_type == "amazon_catalog" or observation.source_plugin == "amazon_catalog_spapi":
                 row["title"] = metadata.get("title") or observation.title or row.get("title")
                 row["brand"] = metadata.get("brand") or row.get("brand")
-                row["product_type"] = metadata.get("product_type") or row.get("product_type")
-                row["category"] = metadata.get("category") or row.get("category")
+                row["product_type"] = metadata.get("amazon_product_type") or metadata.get("product_type") or row.get("product_type")
+                row["category"] = metadata.get("amazon_category") or metadata.get("category") or row.get("category")
+                row["seed_category"] = metadata.get("seed_category") or row.get("seed_category")
+                row["amazon_category"] = metadata.get("amazon_category") or metadata.get("category") or row.get("amazon_category")
+                row["amazon_product_type"] = metadata.get("amazon_product_type") or metadata.get("product_type") or row.get("amazon_product_type")
                 row["dimensions"] = metadata.get("dimensions") or row.get("dimensions")
                 row["discovered_from_query"] = metadata.get("product_name") or row.get("discovered_from_query")
                 row["bestseller_rank"] = (
@@ -347,6 +446,10 @@ class ComparableService:
                     or metadata.get("sales_rank")
                     or row.get("bestseller_rank")
                 )
+                row["bestseller_ranks"] = metadata.get("sales_ranks") or row.get("bestseller_ranks") or []
+                row["rank_category"] = metadata.get("rank_category") or row.get("rank_category")
+                row["browse_node"] = metadata.get("browse_node") or row.get("browse_node")
+                row["rank_classification"] = metadata.get("rank_classification") or row.get("rank_classification")
             if evidence_type == "amazon_pricing" or observation.source_plugin == "amazon_pricing_spapi":
                 row["price"] = _first_number(
                     metrics.get("featured_offer_price"),
@@ -374,6 +477,9 @@ class ComparableService:
         comparable.brand = row.get("brand") or comparable.brand
         comparable.product_type = row.get("product_type") or comparable.product_type
         comparable.category = row.get("category") or comparable.category
+        comparable.seed_category = row.get("seed_category") or comparable.seed_category
+        comparable.amazon_category = row.get("amazon_category") or comparable.amazon_category or row.get("category")
+        comparable.amazon_product_type = row.get("amazon_product_type") or comparable.amazon_product_type or row.get("product_type")
         comparable.price = row.get("price") if row.get("price") is not None else comparable.price
         comparable.currency = row.get("currency") or comparable.currency or "USD"
         comparable.dimensions = row.get("dimensions") or comparable.dimensions
@@ -384,9 +490,10 @@ class ComparableService:
         product: ProductCandidate,
         row: dict[str, Any],
         price_median: float | None,
+        price_sample_count: int,
     ) -> dict[str, Any]:
         title = str(row.get("title") or "")
-        target_tokens = _tokens(" ".join([product.canonical_name, product.category or ""]))
+        target_tokens = _tokens(product.canonical_name)
         title_tokens = _tokens(title)
         overlap = len(target_tokens & title_tokens)
         required_overlap = len(target_tokens - STOPWORDS)
@@ -400,22 +507,24 @@ class ComparableService:
         else:
             warnings.append("No meaningful title overlap with candidate concept.")
 
-        category = str(row.get("category") or "").lower()
-        product_type = str(row.get("product_type") or "").lower()
+        category = str(row.get("amazon_category") or row.get("category") or "").lower()
+        product_type = str(row.get("amazon_product_type") or row.get("product_type") or "").lower()
         category_tokens = _tokens(category)
         product_type_tokens = _tokens(product_type)
         if category and target_tokens & category_tokens:
             score += 12
             reasons.append("Amazon category is compatible.")
-        if product_type and target_tokens & product_type_tokens:
+        if product_type and product_type != "base_product" and target_tokens & product_type_tokens:
             score += 12
             reasons.append("Amazon product type overlaps target concept.")
-        elif product_type and overlap_ratio < 0.45:
+        elif product_type and product_type != "base_product" and overlap_ratio < 0.45:
             score -= 15
             warnings.append(f"Product type may be different: {row.get('product_type')}.")
+        elif not category:
+            warnings.append("Amazon category is missing; relevance confidence is lower.")
 
         price = row.get("price")
-        if price is not None and price_median and price_median > 0:
+        if price is not None and price_median and price_median > 0 and price_sample_count >= 3:
             price = float(price)
             if price < price_median * 0.35 or price > price_median * 3.0:
                 score -= 25
@@ -431,11 +540,11 @@ class ComparableService:
         score = round(max(0.0, min(100.0, score)), 1)
         if any("Price is an outlier" in warning for warning in warnings):
             status = "excluded_price_outlier"
-        elif score >= 75:
+        elif score >= 60:
             status = "included"
-        elif score >= 50:
+        elif score >= 45:
             status = "needs_review"
-        elif product_type and overlap_ratio < 0.45:
+        elif product_type and product_type != "base_product" and overlap_ratio < 0.45:
             status = "excluded_wrong_product_type"
         else:
             status = "excluded_irrelevant"
@@ -493,15 +602,39 @@ def _has_snapshot_value(row: dict[str, Any]) -> bool:
     )
 
 
+def _observation_fingerprint(row: dict[str, Any]) -> str:
+    payload = {
+        "asin": row.get("asin"),
+        "source_observation_ids": sorted(row.get("source_observation_ids") or []),
+        "price": row.get("price"),
+        "featured_offer_price": row.get("featured_offer_price"),
+        "lowest_offer_price": row.get("lowest_offer_price"),
+        "offer_count": row.get("offer_count"),
+        "seller_count": row.get("seller_count"),
+        "bestseller_rank": row.get("bestseller_rank"),
+        "rank_category": row.get("rank_category"),
+        "review_count": row.get("review_count"),
+        "rating": row.get("rating"),
+        "fee_estimate": row.get("fee_estimate"),
+    }
+    encoded = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _snapshot_from_row(
     product_id: uuid.UUID,
     comparable_asin_id: uuid.UUID,
     asin: str,
     row: dict[str, Any],
+    *,
+    snapshot_cohort_id: uuid.UUID,
+    observation_fingerprint: str,
 ) -> MarketplaceAsinSnapshot:
     return MarketplaceAsinSnapshot(
         product_id=product_id,
         comparable_asin_id=comparable_asin_id,
+        snapshot_cohort_id=snapshot_cohort_id,
+        observation_fingerprint=observation_fingerprint,
         asin=asin,
         observed_at=row.get("last_observed_at") or datetime.now(UTC),
         price=row.get("price"),
@@ -511,6 +644,9 @@ def _snapshot_from_row(
         seller_count=row.get("seller_count"),
         bestseller_rank=row.get("bestseller_rank"),
         bestseller_category=row.get("category"),
+        rank_category=row.get("rank_category") or row.get("category"),
+        browse_node=row.get("browse_node"),
+        rank_classification=row.get("rank_classification"),
         review_count=row.get("review_count"),
         rating=row.get("rating"),
         fee_estimate=row.get("fee_estimate"),
@@ -519,7 +655,9 @@ def _snapshot_from_row(
         source_observation_ids=row.get("source_observation_ids") or [],
         metadata_={
             "snapshot_source": "comparable_service",
+            "snapshot_cohort_id": str(snapshot_cohort_id),
             "automatic_relevance_version": COMPARABLE_RELEVANCE_VERSION,
+            "bestseller_ranks": row.get("bestseller_ranks") or [],
         },
     )
 
@@ -529,6 +667,8 @@ def _snapshot_dict(snapshot: MarketplaceAsinSnapshot) -> dict[str, Any]:
         "id": str(snapshot.id),
         "product_id": str(snapshot.product_id),
         "comparable_asin_id": str(snapshot.comparable_asin_id) if snapshot.comparable_asin_id else None,
+        "snapshot_cohort_id": str(snapshot.snapshot_cohort_id) if snapshot.snapshot_cohort_id else None,
+        "observation_fingerprint": snapshot.observation_fingerprint,
         "asin": snapshot.asin,
         "observed_at": snapshot.observed_at,
         "price": snapshot.price,
@@ -538,6 +678,9 @@ def _snapshot_dict(snapshot: MarketplaceAsinSnapshot) -> dict[str, Any]:
         "seller_count": snapshot.seller_count,
         "bestseller_rank": snapshot.bestseller_rank,
         "bestseller_category": snapshot.bestseller_category,
+        "rank_category": snapshot.rank_category,
+        "browse_node": snapshot.browse_node,
+        "rank_classification": snapshot.rank_classification,
         "review_count": snapshot.review_count,
         "rating": snapshot.rating,
         "fee_estimate": snapshot.fee_estimate,
@@ -556,48 +699,177 @@ def _window_signal(snapshots: list[MarketplaceAsinSnapshot], days: int) -> dict[
             "sample_count": 0,
             "coverage": 0,
             "status": "missing",
+            "confidence": 0,
             "latest_observation_at": None,
+            "cohort_change": {},
+            "matched_asin_change": {},
+            "comparable_churn": {},
         }
     latest_at = snapshots[-1].observed_at
     cutoff = latest_at - timedelta(days=days)
     window_rows = [row for row in snapshots if row.observed_at >= cutoff]
-    asins = {row.asin for row in window_rows}
-    span_days = (
-        (window_rows[-1].observed_at - window_rows[0].observed_at).days
-        if len(window_rows) >= 2
-        else 0
+    cohorts = _cohorts(window_rows)
+    asins = {row.asin for cohort in cohorts for row in cohort["rows"]}
+    span_days = (cohorts[-1]["observed_at"] - cohorts[0]["observed_at"]).days if len(cohorts) >= 2 else 0
+    min_span = max(1, int(days * 0.75))
+    start = cohorts[0] if cohorts else None
+    end = cohorts[-1] if cohorts else None
+    churn = _cohort_churn(start, end) if start and end and start is not end else {}
+    matched = _matched_changes(start, end) if start and end and start is not end else {}
+    matched_count = int(matched.get("matched_asin_count") or 0)
+    matched_coverage = float(matched.get("matched_coverage_percent") or 0)
+    status = (
+        "measured"
+        if len(cohorts) >= 2
+        and span_days >= min_span
+        and matched_count >= 2
+        and matched_coverage >= 50
+        else "insufficient_history"
     )
-    status = "measured" if len(window_rows) >= 2 and span_days >= max(1, int(days * 0.5)) else "insufficient_history"
+    churn_percent = float(churn.get("churn_percent") or 0)
+    confidence = 0 if status != "measured" else round(max(0, min(100, matched_coverage - churn_percent * 0.5)), 1)
     return {
         "window_days": days,
         "sample_count": len(window_rows),
+        "cohort_count": len(cohorts),
         "coverage": min(100, len(asins) * 20),
         "latest_observation_at": latest_at,
         "status": status,
-        "price_delta": _delta(window_rows, "price") if status == "measured" else None,
-        "seller_count_delta": _delta(window_rows, "seller_count") if status == "measured" else None,
-        "offer_count_delta": _delta(window_rows, "offer_count") if status == "measured" else None,
-        "bsr_delta": _delta(window_rows, "bestseller_rank") if status == "measured" else None,
-        "review_count_delta": _delta(window_rows, "review_count") if status == "measured" else None,
-        "comparable_set_churn": _churn(window_rows) if status == "measured" else None,
+        "confidence": confidence,
+        "cohort_change": _cohort_changes(start, end) if start and end and start is not end else {},
+        "matched_asin_change": matched,
+        "comparable_churn": churn,
+        "price_delta": (matched.get("price", {}) or {}).get("absolute_change") if status == "measured" else None,
+        "seller_count_delta": (matched.get("seller_count", {}) or {}).get("absolute_change") if status == "measured" else None,
+        "offer_count_delta": (matched.get("offer_count", {}) or {}).get("absolute_change") if status == "measured" else None,
+        "bsr_delta": (matched.get("bestseller_rank", {}) or {}).get("absolute_change") if status == "measured" else None,
+        "review_count_delta": (matched.get("review_count", {}) or {}).get("absolute_change") if status == "measured" else None,
+        "comparable_set_churn": churn.get("churn_percent") if status == "measured" else None,
     }
 
 
-def _delta(rows: list[MarketplaceAsinSnapshot], field: str) -> float | None:
-    first_values = [getattr(row, field) for row in rows[: max(1, len(rows) // 3)] if getattr(row, field) is not None]
-    last_values = [getattr(row, field) for row in rows[-max(1, len(rows) // 3) :] if getattr(row, field) is not None]
-    if not first_values or not last_values:
-        return None
-    return round(float(median(last_values)) - float(median(first_values)), 2)
+def _cohorts(rows: list[MarketplaceAsinSnapshot]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[MarketplaceAsinSnapshot]] = {}
+    for row in rows:
+        key = str(row.snapshot_cohort_id or row.observed_at.isoformat())
+        grouped.setdefault(key, []).append(row)
+    cohorts = []
+    for key, cohort_rows in grouped.items():
+        cohort_rows = sorted(cohort_rows, key=lambda item: item.asin)
+        observed_at = max(row.observed_at for row in cohort_rows)
+        cohorts.append(
+            {
+                "snapshot_cohort_id": key,
+                "observed_at": observed_at,
+                "rows": cohort_rows,
+                "aggregate": _cohort_aggregate(cohort_rows),
+                "asins": {row.asin for row in cohort_rows},
+            }
+        )
+    return sorted(cohorts, key=lambda cohort: cohort["observed_at"])
 
 
-def _churn(rows: list[MarketplaceAsinSnapshot]) -> float | None:
-    if len(rows) < 2:
-        return None
-    first = {row.asin for row in rows[: max(1, len(rows) // 3)]}
-    last = {row.asin for row in rows[-max(1, len(rows) // 3) :]}
+def _cohort_aggregate(rows: list[MarketplaceAsinSnapshot]) -> dict[str, Any]:
+    return {
+        "median_price": _median_attr(rows, "price"),
+        "median_featured_offer": _median_attr(rows, "featured_offer_price"),
+        "median_bsr": _median_attr(rows, "bestseller_rank"),
+        "median_review_count": _median_attr(rows, "review_count"),
+        "median_offer_count": _median_attr(rows, "offer_count"),
+        "median_seller_count": _median_attr(rows, "seller_count"),
+        "included_comparable_count": len(rows),
+        "coverage_percent": min(100, len(rows) * 20),
+    }
+
+
+def _median_attr(rows: list[MarketplaceAsinSnapshot], field: str) -> float | None:
+    values = [float(value) for row in rows if (value := getattr(row, field)) is not None]
+    return round(float(median(values)), 2) if values else None
+
+
+def _cohort_changes(start: dict[str, Any], end: dict[str, Any]) -> dict[str, Any]:
+    fields = {
+        "price": "median_price",
+        "featured_offer": "median_featured_offer",
+        "bestseller_rank": "median_bsr",
+        "review_count": "median_review_count",
+        "offer_count": "median_offer_count",
+        "seller_count": "median_seller_count",
+    }
+    return {
+        name: _change(start["aggregate"].get(field), end["aggregate"].get(field))
+        for name, field in fields.items()
+    }
+
+
+def _matched_changes(start: dict[str, Any], end: dict[str, Any]) -> dict[str, Any]:
+    start_by_asin = {row.asin: row for row in start["rows"]}
+    end_by_asin = {row.asin: row for row in end["rows"]}
+    matched_asins = sorted(set(start_by_asin) & set(end_by_asin))
+    result: dict[str, Any] = {
+        "matched_asin_count": len(matched_asins),
+        "starting_cohort_size": len(start_by_asin),
+        "ending_cohort_size": len(end_by_asin),
+        "matched_coverage_percent": round(
+            100 * len(matched_asins) / max(1, max(len(start_by_asin), len(end_by_asin))),
+            1,
+        ),
+    }
+    for field in ("price", "featured_offer_price", "bestseller_rank", "review_count", "offer_count", "seller_count"):
+        changes = [
+            _change(getattr(start_by_asin[asin], field), getattr(end_by_asin[asin], field))
+            for asin in matched_asins
+            if getattr(start_by_asin[asin], field) is not None and getattr(end_by_asin[asin], field) is not None
+        ]
+        changes = [change for change in changes if change.get("absolute_change") is not None]
+        key = "featured_offer" if field == "featured_offer_price" else field
+        result[key] = _median_change(changes)
+    return result
+
+
+def _change(start_value: Any, end_value: Any) -> dict[str, float | None]:
+    if start_value is None or end_value is None:
+        return {"start": start_value, "end": end_value, "absolute_change": None, "percent_change": None}
+    start_float = float(start_value)
+    end_float = float(end_value)
+    absolute = round(end_float - start_float, 2)
+    percent = round(100 * absolute / abs(start_float), 2) if start_float else None
+    return {"start": round(start_float, 2), "end": round(end_float, 2), "absolute_change": absolute, "percent_change": percent}
+
+
+def _median_change(changes: list[dict[str, float | None]]) -> dict[str, float | None]:
+    if not changes:
+        return {"absolute_change": None, "percent_change": None}
+    absolute: list[float] = []
+    percent: list[float] = []
+    for change in changes:
+        absolute_change = change.get("absolute_change")
+        percent_change = change.get("percent_change")
+        if absolute_change is not None:
+            absolute.append(float(absolute_change))
+        if percent_change is not None:
+            percent.append(float(percent_change))
+    return {
+        "absolute_change": round(float(median(absolute)), 2) if absolute else None,
+        "percent_change": round(float(median(percent)), 2) if percent else None,
+    }
+
+
+def _cohort_churn(start: dict[str, Any], end: dict[str, Any]) -> dict[str, Any]:
+    first = set(start["asins"])
+    last = set(end["asins"])
+    added = last - first
+    removed = first - last
+    retained = first & last
     union = first | last
-    return round(100 * (1 - len(first & last) / len(union)), 1) if union else None
+    return {
+        "added_asin_count": len(added),
+        "removed_asin_count": len(removed),
+        "retained_asin_count": len(retained),
+        "starting_cohort_size": len(first),
+        "ending_cohort_size": len(last),
+        "churn_percent": round(100 * (1 - len(retained) / len(union)), 1) if union else None,
+    }
 
 
 def _brand_specific_title(product_name: str, title: str) -> bool:

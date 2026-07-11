@@ -76,6 +76,7 @@ class AmazonPricingSpApiPlugin:
                             observed_at=observed_at,
                             marketplace_id=settings.amazon_marketplace_id,
                             environment=settings.amazon_sp_api_environment,
+                            store_raw_payloads=bool(settings.store_raw_amazon_payloads),
                         )
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -100,6 +101,7 @@ def _pricing_observation(
     observed_at: datetime,
     marketplace_id: str,
     environment: str,
+    store_raw_payloads: bool,
 ) -> RawObservationDTO:
     result = _pricing_result(payload, asin)
     product = _dict_value(result, "Product")
@@ -134,6 +136,7 @@ def _pricing_observation(
     featured_offer_price = min(featured_prices) if featured_prices else competitive_price
     lowest_offer_price = min(offer_prices or competitive_prices) if (offer_prices or competitive_prices) else None
     modeled_price = featured_offer_price or competitive_price or lowest_offer_price
+    raw_payload = {"raw_pricing_response": payload} if store_raw_payloads else {}
 
     return RawObservationDTO(
         source="amazon_sp_api",
@@ -146,18 +149,23 @@ def _pricing_observation(
         metrics={
             "price": modeled_price,
             "offer_count": offer_count,
-            "seller_count": offer_count,
+            "seller_count": None,
             "featured_offer_price": featured_offer_price,
             "competitive_price": competitive_price,
             "lowest_offer_price": lowest_offer_price,
         },
         metadata={
             "evidence_type": "amazon_pricing",
+            "schema_version": "amazon_pricing_normalized_v2",
             "asin": asin,
             "marketplace_id": marketplace_id,
             "amazon_spapi_env": environment,
             "currency": _currency_code(result) or "USD",
-            "raw_pricing_response": payload,
+            "offer_count_semantics": "NumberOfOfferListings; not unique sellers.",
+            "seller_count_semantics": "Not measured by this API response.",
+            "retrieved_at": observed_at.isoformat(),
+            "raw_payload_stored": store_raw_payloads,
+            **raw_payload,
         },
     )
 

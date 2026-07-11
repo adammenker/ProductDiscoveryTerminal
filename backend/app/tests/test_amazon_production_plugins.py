@@ -183,7 +183,7 @@ def test_pricing_plugin_maps_metrics_and_isolates_an_asin_failure() -> None:
     assert metrics == {
         "price": 24.99,
         "offer_count": 7,
-        "seller_count": 7,
+        "seller_count": None,
         "featured_offer_price": 24.99,
         "competitive_price": 23.49,
         "lowest_offer_price": 22.99,

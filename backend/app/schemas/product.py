@@ -3,7 +3,22 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+FEEDBACK_REASONS = {
+    "wrong_comparables",
+    "demand_overstated",
+    "demand_understated",
+    "competition_overstated",
+    "competition_understated",
+    "bad_price_estimate",
+    "bad_fee_estimate",
+    "missing_risk",
+    "missing_data_mishandled",
+    "actually_interesting",
+    "actually_unattractive",
+    "other",
+}
 
 
 class ProductListItem(BaseModel):
@@ -51,8 +66,10 @@ class ProductDetailResponse(BaseModel):
     recent_observations: list[dict[str, Any]] = Field(default_factory=list)
     discovery_source: dict[str, Any] = Field(default_factory=dict)
     comparable_asins: list[dict[str, Any]] = Field(default_factory=list)
+    effective_comparables: list[dict[str, Any]] = Field(default_factory=list)
     comparable_summary: dict[str, Any] = Field(default_factory=dict)
     historical_summary: dict[str, Any] = Field(default_factory=dict)
+    historical_signals: dict[str, Any] = Field(default_factory=dict)
     marketplace_history: list[dict[str, Any]] = Field(default_factory=list)
     economics_validator: dict[str, Any] = Field(default_factory=dict)
     supplier_validation: dict[str, Any] = Field(default_factory=dict)
@@ -76,3 +93,14 @@ class RecommendationFeedbackCreate(BaseModel):
     verdict: str
     reasons: list[str] = Field(default_factory=list)
     notes: str | None = None
+
+    @field_validator("reasons")
+    @classmethod
+    def reasons_are_required(cls, value: list[str]) -> list[str]:
+        cleaned = [reason.strip() for reason in value if reason.strip()]
+        if not cleaned:
+            raise ValueError("At least one feedback reason is required.")
+        unknown = sorted(set(cleaned) - FEEDBACK_REASONS)
+        if unknown:
+            raise ValueError(f"Unsupported feedback reason(s): {', '.join(unknown)}")
+        return cleaned

@@ -15,7 +15,6 @@ from app.plugins.ingestion.amazon_catalog_spapi.plugin import AmazonCatalogSpApi
 from app.plugins.ingestion.amazon_fees_spapi.plugin import AmazonFeesSpApiPlugin
 from app.plugins.ingestion.amazon_mock.plugin import AmazonMockPlugin
 from app.plugins.ingestion.amazon_pricing_spapi.plugin import AmazonPricingSpApiPlugin
-from app.plugins.ingestion.amazon_sp_api.plugin import AmazonSpApiPlugin
 from app.plugins.ingestion.etsy_api.plugin import EtsyApiPlugin
 from app.plugins.ingestion.google_trends_mock.plugin import GoogleTrendsMockPlugin
 from app.plugins.ingestion.manual_csv.plugin import ManualCsvPlugin
@@ -28,7 +27,6 @@ from app.schemas.plugin import AnalyzerPlugin, IngestionPlugin, PluginInfo
 INGESTION_PLUGINS: list[IngestionPlugin] = [
     ManualCsvPlugin(),
     AmazonMockPlugin(),
-    AmazonSpApiPlugin(),
     AmazonCatalogSpApiPlugin(),
     AmazonPricingSpApiPlugin(),
     AmazonFeesSpApiPlugin(),

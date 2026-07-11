@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
     ComparableAsin,
     CostModel,
+    MarketplaceAsinSnapshot,
     ObservationEntityType,
     PluginRun,
     PluginType,
@@ -67,6 +68,17 @@ def test_comparable_relevance_filters_irrelevant_and_price_outlier_asins(
         price=9.99,
         fees=4.0,
         sales_rank=900,
+    )
+    _amazon_observation_set(
+        db_session,
+        product,
+        asin="B000GOOD02",
+        title="Reusable Facial Ice Roller for Puffy Face",
+        product_type="facial ice roller",
+        category="beauty",
+        price=23.99,
+        fees=8.0,
+        sales_rank=1400,
     )
     _amazon_observation_set(
         db_session,
@@ -150,6 +162,53 @@ def test_manual_comparable_overrides_persist_and_feed_economics(db_session: Sess
     assert persisted.manually_overridden is True
 
 
+def test_snapshot_cohorts_are_idempotent_and_scoring_is_read_only(db_session: Session) -> None:
+    product = _product(db_session)
+    _amazon_observation_set(
+        db_session,
+        product,
+        asin="B000GOOD01",
+        title="Facial Ice Roller for Puffy Face",
+        product_type="facial ice roller",
+        category="beauty",
+        price=24.99,
+        fees=8.25,
+        sales_rank=1200,
+    )
+
+    service = ComparableService(db_session)
+    service.sync_product(product.id)
+    assert db_session.scalar(select(func.count()).select_from(MarketplaceAsinSnapshot)) == 0
+
+    first = service.create_snapshot_cohort(product.id)
+    assert first["snapshots_created"] == 1
+    assert db_session.scalar(select(func.count()).select_from(MarketplaceAsinSnapshot)) == 1
+
+    retry = service.create_snapshot_cohort(product.id)
+    assert retry["snapshot_cohort_id"] == first["snapshot_cohort_id"]
+    assert retry["snapshots_created"] == 0
+
+    ScoringService(db_session).score_product(product.id)
+    assert db_session.scalar(select(func.count()).select_from(MarketplaceAsinSnapshot)) == 1
+
+    _amazon_observation_set(
+        db_session,
+        product,
+        asin="B000GOOD01",
+        title="Facial Ice Roller for Puffy Face",
+        product_type="facial ice roller",
+        category="beauty",
+        price=26.99,
+        fees=8.75,
+        sales_rank=900,
+        content_suffix="-refresh-2",
+    )
+    service.sync_product(product.id)
+    second = service.create_snapshot_cohort(product.id)
+    assert second["snapshot_cohort_id"] != first["snapshot_cohort_id"]
+    assert second["snapshots_created"] == 1
+
+
 def _product(db_session: Session) -> ProductCandidate:
     product = ProductCandidate(
         canonical_name="facial ice roller",
@@ -187,6 +246,7 @@ def _amazon_observation_set(
     price: float,
     fees: float,
     sales_rank: int,
+    content_suffix: str = "",
 ) -> None:
     run = _run(db_session)
     now = datetime.now(UTC)
@@ -211,7 +271,7 @@ def _amazon_observation_set(
                     "category": category,
                 },
                 media_urls=[],
-                content_hash=f"{asin}-catalog",
+                content_hash=f"{asin}-catalog{content_suffix}",
             ),
             RawObservation(
                 plugin_run_id=run.id,
@@ -225,7 +285,7 @@ def _amazon_observation_set(
                 metrics={"price": price, "seller_count": 12, "offer_count": 12},
                 metadata_={"evidence_type": "amazon_pricing", "asin": asin, "currency": "USD"},
                 media_urls=[],
-                content_hash=f"{asin}-pricing",
+                content_hash=f"{asin}-pricing{content_suffix}",
             ),
         ]
     )

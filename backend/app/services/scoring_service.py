@@ -22,7 +22,7 @@ class ScoringService:
 
     def score_product(self, product_id: uuid.UUID | str) -> OpportunityScore:
         comparable_service = ComparableService(self.db)
-        comparable_service.sync_product(product_id)
+        comparable_service.sync_product(product_id, create_snapshots=False)
         context = self.product_service.build_context(product_id)
         observations = context.observations
         market_signals = context.market_signals

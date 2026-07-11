@@ -4,6 +4,7 @@ import clsx from "clsx";
 import { ExternalLink, Loader2, Play } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
 import { RecommendationBadge } from "@/components/RecommendationBadge";
 import { RecordTable } from "@/components/RecordTable";
@@ -25,7 +26,7 @@ import {
   useProductDetail,
   useUpdateComparable
 } from "@/lib/validation-hooks";
-import type { ComparableAsin } from "@/types/api";
+import type { ComparableAsin, HistoricalChange, HistoricalSignalWindow } from "@/types/api";
 
 export default function ProductDetailPage() {
   const params = useParams<{ id: string }>();
@@ -33,6 +34,7 @@ export default function ProductDetailPage() {
   const evaluate = useEvaluateConstraints(params.id);
   const updateComparable = useUpdateComparable(params.id);
   const feedback = useCreateRecommendationFeedback(params.id);
+  const [feedbackReasons, setFeedbackReasons] = useState<string[]>([]);
 
   if (product.isLoading) return <EmptyState label="Loading product detail" />;
   if (product.isError) return <EmptyState label={`Product detail unavailable: ${product.error.message}`} />;
@@ -225,20 +227,9 @@ export default function ProductDetailPage() {
         confidence={null}
         missing={!data.historical_summary.snapshot_count ? ["Marketplace history"] : []}
       >
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 xl:grid-cols-3">
           {Object.entries(data.historical_summary.derived_signals.windows ?? {}).map(([window, signal]) => (
-            <div key={window} className="border border-terminal-line bg-terminal-bg p-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="font-mono text-xs uppercase text-terminal-muted">{window}</div>
-                <DecisionBadge value={String(signal.status ?? "missing")} />
-              </div>
-              <div className="mt-3 grid gap-1 font-mono text-xs text-terminal-muted">
-                <span>Samples {String(signal.sample_count ?? 0)}</span>
-                <span>Price {formatDelta(signal.price_delta)}</span>
-                <span>BSR {formatDelta(signal.bsr_delta)}</span>
-                <span>Sellers {formatDelta(signal.seller_count_delta)}</span>
-              </div>
-            </div>
+            <HistoricalSignalCard key={window} window={window} signal={signal} />
           ))}
         </div>
       </ValidationCard>
@@ -265,6 +256,12 @@ export default function ProductDetailPage() {
               <span className="font-mono text-xs text-terminal-muted">
                 {modeled.target_margin_percent}% target margin / fee source {titleCase(economics.fee_source)}
               </span>
+            </div>
+            <div className="grid gap-2 border border-terminal-line bg-terminal-bg p-3 sm:grid-cols-2 xl:grid-cols-4">
+              <Metric label="Fee status" value={economics.fee_provenance?.status ? titleCase(economics.fee_provenance.status) : titleCase(economics.fee_source)} />
+              <Metric label="Price source" value={economics.fee_provenance?.modeled_price_source ? titleCase(economics.fee_provenance.modeled_price_source) : "--"} />
+              <Metric label="Fee confidence" value={String(economics.fee_provenance?.confidence ?? economics.fee_source_confidence ?? "--")} />
+              <Metric label="Fee ASIN" value={economics.fee_provenance?.comparable_asin ?? economics.comparable_asin ?? "--"} />
             </div>
             <WarningList warnings={economics.warnings} />
           </div>
@@ -390,6 +387,32 @@ export default function ProductDetailPage() {
         confidence={null}
         missing={[]}
       >
+        <div className="mb-3 flex flex-wrap gap-2">
+          {FEEDBACK_REASON_OPTIONS.map((option) => {
+            const selected = feedbackReasons.includes(option.value);
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  setFeedbackReasons((current) =>
+                    selected
+                      ? current.filter((reason) => reason !== option.value)
+                      : [...current, option.value]
+                  );
+                }}
+                className={clsx(
+                  "inline-flex h-8 items-center border px-2.5 font-mono text-[11px] uppercase",
+                  selected
+                    ? "border-terminal-green bg-terminal-green/10 text-terminal-green"
+                    : "border-terminal-line bg-terminal-bg text-terminal-muted hover:border-terminal-green hover:text-terminal-green"
+                )}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
         <div className="flex flex-wrap gap-2">
           {[
             ["Good", "good_recommendation"],
@@ -399,8 +422,8 @@ export default function ProductDetailPage() {
             <button
               key={verdict}
               type="button"
-              disabled={feedback.isPending}
-              onClick={() => feedback.mutate({ verdict: verdict as "good_recommendation" | "bad_recommendation" | "uncertain", reasons: [] })}
+              disabled={feedback.isPending || feedbackReasons.length === 0}
+              onClick={() => feedback.mutate({ verdict: verdict as "good_recommendation" | "bad_recommendation" | "uncertain", reasons: feedbackReasons })}
               className="inline-flex h-9 items-center border border-terminal-line bg-terminal-bg px-3 font-mono text-xs uppercase text-terminal-muted hover:border-terminal-green hover:text-terminal-green disabled:opacity-50"
             >
               {label}
@@ -431,6 +454,62 @@ export default function ProductDetailPage() {
           </RawSection>
         </div>
       </section>
+    </div>
+  );
+}
+
+const FEEDBACK_REASON_OPTIONS = [
+  { label: "Wrong comparables", value: "wrong_comparables" },
+  { label: "Demand overstated", value: "demand_overstated" },
+  { label: "Demand understated", value: "demand_understated" },
+  { label: "Competition overstated", value: "competition_overstated" },
+  { label: "Competition understated", value: "competition_understated" },
+  { label: "Bad price", value: "bad_price_estimate" },
+  { label: "Bad fee", value: "bad_fee_estimate" },
+  { label: "Missing risk", value: "missing_risk" },
+  { label: "Missing data", value: "missing_data_mishandled" },
+  { label: "Interesting", value: "actually_interesting" },
+  { label: "Unattractive", value: "actually_unattractive" },
+  { label: "Other", value: "other" }
+] as const;
+
+function HistoricalSignalCard({
+  window,
+  signal
+}: {
+  window: string;
+  signal: HistoricalSignalWindow;
+}) {
+  const cohortPrice = signal.cohort_change?.price;
+  const matchedPrice = signal.matched_asin_change?.price;
+  const matchedCount = signal.matched_asin_change?.matched_asin_count;
+  const churn = signal.comparable_churn;
+
+  return (
+    <div className="border border-terminal-line bg-terminal-bg p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="font-mono text-xs uppercase text-terminal-muted">{window}</div>
+        <DecisionBadge value={signal.status ?? "missing"} />
+      </div>
+      <div className="mt-3 grid gap-2 text-xs text-terminal-muted">
+        <div className="grid grid-cols-2 gap-2">
+          <Metric label="Cohorts" value={String(signal.cohort_count ?? 0)} />
+          <Metric label="Confidence" value={formatMetric(signal.confidence)} />
+        </div>
+        <HistoryLine label="Whole-cohort price" value={historicalChange(cohortPrice)} />
+        <HistoryLine label="Matched-ASIN price" value={historicalChange(isChange(matchedPrice) ? matchedPrice : undefined)} />
+        <HistoryLine label="Matched ASINs" value={String(typeof matchedCount === "number" ? matchedCount : 0)} />
+        <HistoryLine label="Comparable churn" value={churn?.churn_percent != null ? `${churn.churn_percent.toFixed(1)}%` : "--"} />
+      </div>
+    </div>
+  );
+}
+
+function HistoryLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-t border-terminal-line/70 pt-2">
+      <span>{label}</span>
+      <span className="font-mono text-terminal-ink">{value}</span>
     </div>
   );
 }
@@ -527,6 +606,12 @@ function formatMetric(value?: number | null) {
   return value == null ? "--" : value.toFixed(0);
 }
 
-function formatDelta(value: unknown) {
-  return typeof value === "number" ? value.toFixed(1) : "--";
+function isChange(value: unknown): value is HistoricalChange {
+  return Boolean(value && typeof value === "object" && "absolute_change" in value);
+}
+
+function historicalChange(value?: HistoricalChange) {
+  if (!value || value.absolute_change == null) return "--";
+  const percentText = value.percent_change == null ? "" : ` / ${value.percent_change.toFixed(1)}%`;
+  return `${value.absolute_change.toFixed(1)}${percentText}`;
 }

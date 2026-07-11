@@ -13,10 +13,9 @@ RECOMMENDATION_V2_THRESHOLDS = {
 
 RECOMMENDATION_V2_WEIGHTS = {
     "demand_proxy": 0.30,
-    "competition": 0.25,
-    "economics": 0.20,
+    "competition": 0.30,
+    "economics": 0.25,
     "risk": 0.15,
-    "data_quality": 0.10,
 }
 
 EVIDENCE_CONFIDENCE_WEIGHTS = {

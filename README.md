@@ -23,7 +23,7 @@ Services:
 - Health: <http://localhost:8000/health>
 - Postgres: `localhost:5432`
 
-Open the frontend and press **Run Pipeline** to load mock/manual evidence, normalize products, run analyzers, and generate scores.
+Open the frontend, type a product keyword in the search bar, and fetch real Amazon evidence through the SP-API research flow. Mock/sample plugins are still available for explicit development runs, but the default product research UI does not seed demo data.
 
 ## Environment
 
@@ -89,7 +89,25 @@ production API observations or user-provided manual imports and supplier quotes.
 
 ### Amazon Selling Partner API
 
-The `amazon_sp_api` ingestion plugin is installed but disabled by default. Use the sandbox first with a sandbox refresh token, then switch to production after self-authorizing the production app.
+Amazon research is split into three opt-in plugins:
+
+- `amazon_catalog_spapi` searches Catalog Items and preserves Amazon category/product-type context.
+- `amazon_pricing_spapi` fetches competitive pricing and offer-count evidence for relevant ASINs.
+- `amazon_fees_spapi` fetches Product Fees estimates only for final effective comparables.
+
+The old combined `amazon_sp_api` plugin has been removed from the default registry to prevent duplicate ingestion. The backend research pipeline orchestrates the child plugins in a two-pass flow:
+
+```text
+catalog search
+-> preliminary comparable relevance
+-> pricing for included/needs-review ASINs
+-> final comparable relevance
+-> fees for final included ASINs
+-> one marketplace snapshot cohort
+-> Recommendation V2 scoring
+```
+
+Use the sandbox first with a sandbox refresh token, then switch to production after self-authorizing the production app.
 
 Required local values for sandbox:
 
@@ -101,17 +119,21 @@ AMAZON_MARKETPLACE_ID=ATVPDKIKX0DER
 AMAZON_LWA_CLIENT_ID=replace_me
 AMAZON_LWA_CLIENT_SECRET=replace_me
 AMAZON_LWA_REFRESH_TOKEN=replace_me
+STORE_RAW_AMAZON_PAYLOADS=false
+RAW_PAYLOAD_RETENTION_DAYS=7
 ```
 
 The sandbox endpoint defaults to `https://sandbox.sellingpartnerapi-na.amazon.com` for North America. Production defaults to `https://sellingpartnerapi-na.amazon.com` when `AMAZON_SP_API_ENV=production` and `AMAZON_SP_API_ENDPOINT` is not explicitly set. The backend also accepts the older names `AMAZON_SP_API_ENVIRONMENT` and `AMAZON_REFRESH_TOKEN` for compatibility.
 
-Run the Catalog Items plugin explicitly:
+Run a product research refresh through the API:
 
 ```bash
-curl -X POST http://localhost:8000/ingestion/run \
+curl -X POST http://localhost:8000/ingestion/research \
   -H 'Content-Type: application/json' \
-  -d '{"plugins":["amazon_sp_api"],"query":{"query":"ice roller","limit":10}}'
+  -d '{"query":"camping cookware pot","limit":10}'
 ```
+
+You can still run child plugins explicitly for diagnostics, but normal product discovery should use the research endpoint/UI search so comparable filtering happens before pricing and fees.
 
 Run the minimal connectivity test through the backend container:
 
@@ -121,11 +143,7 @@ docker compose exec -T \
   backend python -m pytest app/tests/test_amazon_sp_api_connectivity.py -q
 ```
 
-The connectivity test exchanges the configured refresh token and performs a read-only
-competitive-pricing lookup, which requires the Pricing role. It does not create,
-update, or ingest product records.
-
-The shared Amazon client already includes a Product Fees helper, so the next Amazon module can replace heuristic fee assumptions with SP-API fee estimates.
+The connectivity test exchanges the configured refresh token and performs a read-only competitive-pricing lookup, which requires the Pricing role. It does not create, update, or ingest product records.
 
 ### Validation-first workflow
 
@@ -151,14 +169,17 @@ POST /products/{id}/evaluate-constraints
 POST /products/{id}/snapshots
 POST /paper-trades/{id}/outcomes
 GET  /backtests/summary
+POST /discovery/seed-lists
+POST /discovery/runs
 ```
 
 Product Opportunity Explorer remains manual-only. Run
 `product_opportunity_explorer_manual_csv` with `query.metadata.file_path` to
 import a user-provided CSV; the application does not scrape Seller Central.
 
-Amazon fee estimates based on comparable ASINs are always proxies, not
-guaranteed actual fees.
+Amazon fee estimates based on comparable ASINs are always proxies, not guaranteed actual fees. Each fee estimate carries provenance (`live_spapi`, `comparable_proxy`, `configured_fallback`, or `missing`) so configured fallbacks cannot look equivalent to live ASIN-based fee estimates.
+
+Recommendation V2 is the source of truth for product decisions. The legacy score fields remain for API compatibility; a legacy numeric zero may represent a V2 null or insufficient-data state.
 
 ## SP-API Production Readiness
 
@@ -210,7 +231,7 @@ max_landed_cost =
   - target_profit
 ```
 
-For now `amazon_fees` are estimated from configurable defaults. When Amazon SP-API is approved, a Product Fees ingestion/analyzer plugin can replace those assumptions with live fee estimates without changing the cost-ceiling formula.
+`amazon_fees` come from Product Fees estimates when an effective comparable has usable pricing. Configured defaults are retained only as low-confidence fallback evidence and do not satisfy the same validation checks as live fee estimates.
 
 Manual supplier quotes can flow through `manual_csv` using these optional columns:
 
@@ -227,6 +248,8 @@ cd backend
 python3 -m pip install -e ".[dev]"
 python3 -m pytest
 python3 -m ruff check app
+python3 -m mypy app
+python3 -m app.evaluation --out evaluation_reports --k 10
 ```
 
 The backend defaults to a local SQLite database when `DATABASE_URL` is not set. Docker Compose uses Postgres and runs Alembic migrations at startup.
@@ -266,15 +289,27 @@ To add an MVP ingestion plugin:
 
 Core services should only know about observations, products, signals, insights, scores, and plugin contracts.
 
+Additional design notes:
+
+- [Recommendation Engine V2](docs/RECOMMENDATION_ENGINE_V2.md)
+- [Amazon Research Pipeline](docs/AMAZON_RESEARCH_PIPELINE.md)
+- [Comparable Relevance](docs/COMPARABLE_RELEVANCE.md)
+- [Historical Signals](docs/HISTORICAL_SIGNALS.md)
+- [Discovery Runs](docs/DISCOVERY_RUNS.md)
+- [Evaluation Harness](docs/EVALUATION_HARNESS.md)
+
 ## Implemented MVP
 
 - FastAPI backend with SQLAlchemy models and Alembic migration.
 - Postgres through Docker Compose, SQLite-compatible local tests.
-- Manual CSV, Amazon mock, Alibaba mock, Reddit mock, Google Trends mock, and opt-in Amazon SP-API/Etsy/Alibaba API ingestion plugins.
+- Manual CSV, Amazon mock, Alibaba mock, Reddit mock, Google Trends mock, and opt-in Amazon Catalog/Pricing/Fees SP-API, Etsy, and Alibaba API ingestion plugins.
 - Demand, competition, supplier, economics, risk, and review analyzer plugins.
 - Compliance documents, secret redaction, production startup guardrails, and an internal compliance status endpoint.
 - Content-hash observation deduplication.
 - Simple alias-based product normalization.
-- Versioned, explainable scoring engine.
+- Versioned, explainable Recommendation V2 engine with separate opportunity, confidence, and readiness scores.
+- Comparable-ASIN relevance filtering, manual comparable overrides, and idempotent marketplace snapshot cohorts.
+- Seed-list discovery runs that cluster broad searches into multiple product candidates.
+- Offline Recommendation V2 evaluation harness with JSON/Markdown reports.
 - REST endpoints for products, opportunities, plugins, plugin runs, health, and pipeline trigger.
 - Next.js terminal UI for dashboard, search, product detail, plugins, and run history.

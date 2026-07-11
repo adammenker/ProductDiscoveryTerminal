@@ -15,7 +15,9 @@ def test_plugin_registry_lists_mvp_plugins() -> None:
     assert {
         "manual_csv",
         "amazon_mock",
-        "amazon_sp_api",
+        "amazon_catalog_spapi",
+        "amazon_pricing_spapi",
+        "amazon_fees_spapi",
         "alibaba_mock",
         "reddit_mock",
         "google_trends_mock",
@@ -33,10 +35,17 @@ def test_plugin_registry_lists_mvp_plugins() -> None:
 
     etsy_plugin = next(plugin for plugin in catalog["ingestion"] if plugin.name == "etsy_api")
     assert etsy_plugin.enabled is False
-    amazon_plugin = next(plugin for plugin in catalog["ingestion"] if plugin.name == "amazon_sp_api")
-    assert amazon_plugin.enabled is False
-    assert amazon_plugin.configured is False
-    assert "AMAZON_LWA_REFRESH_TOKEN" in amazon_plugin.missing_credentials
+    for plugin_name in {
+        "amazon_catalog_spapi",
+        "amazon_pricing_spapi",
+        "amazon_fees_spapi",
+    }:
+        amazon_plugin = next(
+            plugin for plugin in catalog["ingestion"] if plugin.name == plugin_name
+        )
+        assert amazon_plugin.enabled is False
+        assert amazon_plugin.configured is False
+        assert "AMAZON_LWA_REFRESH_TOKEN" in amazon_plugin.missing_credentials
     alibaba_plugin = next(plugin for plugin in catalog["ingestion"] if plugin.name == "alibaba_open_api")
     assert alibaba_plugin.enabled is False
 
@@ -68,12 +77,28 @@ def test_etsy_plugin_is_opt_in_until_configured() -> None:
         plugin.fetch(IngestionQuery(query="ice roller", limit=1))
 
 
-def test_amazon_sp_api_plugin_is_opt_in_until_configured() -> None:
-    plugin = get_ingestion_plugins(["amazon_sp_api"])[0]
+@pytest.mark.parametrize(
+    ("plugin_name", "query"),
+    [
+        ("amazon_catalog_spapi", IngestionQuery(query="ice roller", limit=1)),
+        (
+            "amazon_pricing_spapi",
+            IngestionQuery(metadata={"asins": ["B000TEST01"]}, limit=1),
+        ),
+        (
+            "amazon_fees_spapi",
+            IngestionQuery(metadata={"asins": ["B000TEST01"]}, limit=1),
+        ),
+    ],
+)
+def test_amazon_sp_api_plugins_are_opt_in_until_configured(
+    plugin_name: str, query: IngestionQuery
+) -> None:
+    plugin = get_ingestion_plugins([plugin_name])[0]
 
-    assert plugin.name == "amazon_sp_api"
-    with pytest.raises(RuntimeError, match="amazon_sp_api is disabled"):
-        plugin.fetch(IngestionQuery(query="ice roller", limit=1))
+    assert plugin.name == plugin_name
+    with pytest.raises(RuntimeError, match=f"{plugin_name} is disabled"):
+        plugin.fetch(query)
 
 
 def test_alibaba_plugin_is_opt_in_until_configured() -> None:

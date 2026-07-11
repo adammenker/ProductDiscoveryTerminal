@@ -102,6 +102,10 @@ class ProductService:
             comparable_service.to_dict(row, economics.get("comparable_asin"))
             for row in comparable_service.list_comparables(product.id, sync=False)
         ]
+        effective_comparables = [
+            comparable_service.to_dict(row, economics.get("comparable_asin"))
+            for row in comparable_service.get_effective_comparables(product.id)
+        ]
         history = comparable_service.history(product.id)
         derived_signals = comparable_service.derived_signals(product.id)
         discovery_sources = sorted({item["source"] for item in observations})
@@ -163,11 +167,13 @@ class ProductService:
                 "confidence": min(1.0, 0.45 + len(discovery_sources) * 0.1),
             },
             "comparable_asins": comparable_asins,
+            "effective_comparables": effective_comparables,
             "comparable_summary": comparable_service.comparable_summary(product.id),
             "historical_summary": {
                 "snapshot_count": len(history),
                 "derived_signals": derived_signals,
             },
+            "historical_signals": derived_signals,
             "marketplace_history": history[:100],
             "economics_validator": economics,
             "supplier_validation": supplier,

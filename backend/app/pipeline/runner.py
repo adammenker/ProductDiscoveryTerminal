@@ -50,7 +50,7 @@ class PipelineRunner:
         product_ids: list[UUID | str] = [str(product.id) for product in updated_products]
         comparable_service = ComparableService(self.db)
         for product_id in product_ids:
-            comparable_service.sync_product(product_id)
+            comparable_service.sync_product(product_id, create_snapshots=False)
 
         if request.run_analyzers and product_ids:
             analyzer_runs = AnalyzerRunner(self.db).run(product_ids)

@@ -50,11 +50,16 @@ def build_recommendation_v2(
     )
     components["data_quality"] = data_quality
 
+    opportunity_components = {
+        name: components[name]
+        for name in RECOMMENDATION_V2_WEIGHTS
+        if name in components
+    }
     opportunity_coverage = round(
-        sum(component["coverage"] for component in components.values()) / len(components),
+        sum(component["coverage"] for component in opportunity_components.values()) / len(opportunity_components),
         1,
     )
-    opportunity_score = weighted_score(components, opportunity_coverage)
+    opportunity_score = weighted_score(opportunity_components, opportunity_coverage)
     evidence_confidence_score = data_quality["value"] or 0
     validation_readiness_score = validation_readiness(
         included_comparables=included_comparables,
@@ -63,6 +68,7 @@ def build_recommendation_v2(
         constraint_evaluation=constraint_evaluation,
         insights=insights,
         derived_signals=derived_signals,
+        direct_demand_available=bool(_direct_demand_sources(market_signals)),
     )
 
     missing_evidence = _missing_evidence(
@@ -163,11 +169,18 @@ def demand_proxy_component(
     market_signals: list[dict[str, Any]],
     derived_signals: dict[str, Any],
 ) -> dict[str, Any]:
-    bsr_values = [
-        float(row["metadata"]["bestseller_rank"])
-        for row in comparables
-        if (row.get("metadata") or {}).get("bestseller_rank") is not None
-    ]
+    bsr_values: list[float] = []
+    rank_categories: set[str] = set()
+    for row in comparables:
+        bsr_metadata = row.get("metadata") or {}
+        raw_rank = bsr_metadata.get("bestseller_rank")
+        if raw_rank is None:
+            continue
+        bsr_values.append(float(raw_rank))
+        rank_category = bsr_metadata.get("rank_category") or row.get("amazon_category") or row.get("category")
+        if rank_category:
+            rank_categories.add(str(rank_category).strip().lower())
+    bsr_conflicting = len(rank_categories) > 1
     direct_volume = _signal_values(market_signals, MarketSignalType.SEARCH_VOLUME.value)
     direct_growth = _signal_values(market_signals, MarketSignalType.SEARCH_GROWTH.value)
     trend_values = _signal_values(market_signals, MarketSignalType.TREND_SCORE.value)
@@ -178,6 +191,7 @@ def demand_proxy_component(
         MarketSignalType.BESTSELLER_RANK.value,
     })
 
+    direct_demand_sources = _direct_demand_sources(market_signals)
     if not bsr_values and not direct_volume and not direct_growth and not trend_values:
         return component(
             name="demand_proxy",
@@ -190,17 +204,21 @@ def demand_proxy_component(
             evidence_ids=[],
             explanation="No BSR, Product Opportunity Explorer, trend, or historical demand proxy evidence is available.",
             warnings=["Demand proxy cannot be estimated reliably."],
-            metadata={"direct_demand_data_available": False},
+            metadata={"direct_demand_available": False, "direct_demand_sources": []},
         )
 
     scores: list[float] = []
-    metadata: dict[str, Any] = {"direct_demand_data_available": bool(direct_volume or direct_growth)}
+    metadata: dict[str, Any] = {
+        "direct_demand_available": bool(direct_demand_sources),
+        "direct_demand_sources": direct_demand_sources,
+    }
     warnings = ["Demand is inferred from marketplace proxies."]
     if bsr_values:
         median_bsr = median(bsr_values)
         metadata.update(
             {
                 "median_bsr": median_bsr,
+                "rank_categories": sorted(rank_categories),
                 "p25_bsr": _percentile(bsr_values, 25),
                 "p75_bsr": _percentile(bsr_values, 75),
                 "included_comparables": len(comparables),
@@ -208,7 +226,10 @@ def demand_proxy_component(
                 "bsr_dispersion": round(max(bsr_values) / max(1, min(bsr_values)), 2),
             }
         )
-        scores.append(_bsr_score(median_bsr))
+        if bsr_conflicting:
+            warnings.append("BSR evidence spans incompatible rank categories.")
+        else:
+            scores.append(_bsr_score(median_bsr))
     if direct_volume:
         scores.append(min(100, median(direct_volume) / 20))
     if direct_growth:
@@ -227,10 +248,18 @@ def demand_proxy_component(
     coverage += 25 if direct_volume or direct_growth else 0
     coverage += 15 if bsr_delta is not None else 0
     confidence = coverage * 0.75 + min(20, len(bsr_values) * 2)
+    if bsr_conflicting:
+        confidence -= 30
     return component(
         name="demand_proxy",
         value=_mean(scores),
-        status="measured" if direct_volume or direct_growth else "inferred",
+        status=(
+            "conflicting"
+            if bsr_conflicting and not direct_demand_sources
+            else "measured"
+            if direct_demand_sources
+            else "inferred"
+        ),
         coverage=coverage,
         confidence=confidence,
         evidence_count=len(bsr_values) + len(direct_volume) + len(direct_growth) + len(trend_values),
@@ -250,11 +279,12 @@ def competition_component(
     market_signals: list[dict[str, Any]],
 ) -> dict[str, Any]:
     prices = [float(row["price"]) for row in comparables if row.get("price") is not None]
-    seller_counts = [
-        float(row["metadata"]["seller_count"])
+    offer_counts = [
+        float(row["metadata"]["offer_count"])
         for row in comparables
-        if (row.get("metadata") or {}).get("seller_count") is not None
-    ] or _signal_values(market_signals, MarketSignalType.SELLER_COUNT.value)
+        if (row.get("metadata") or {}).get("offer_count") is not None
+    ]
+    seller_counts = _signal_values(market_signals, MarketSignalType.SELLER_COUNT.value)
     review_counts = [
         float(row["metadata"]["review_count"])
         for row in comparables
@@ -266,7 +296,7 @@ def competition_component(
         if row.get("brand")
     ]
 
-    if not prices and not seller_counts and not review_counts and not brands:
+    if not prices and not offer_counts and not seller_counts and not review_counts and not brands:
         return component(
             name="competition",
             value=None,
@@ -281,16 +311,24 @@ def competition_component(
             metadata={},
         )
 
-    score = 75.0
+    subscores: dict[str, float] = {}
     metadata: dict[str, Any] = {
         "included_comparables": len(comparables),
         "unique_brands": len(set(brands)),
     }
     warnings: list[str] = []
+    measured_inputs = 0
     if seller_counts:
         median_sellers = median(seller_counts)
         metadata["median_seller_count"] = median_sellers
-        score -= min(25, median_sellers * 0.7)
+        subscores["seller_density_attractiveness"] = clamp(90 - min(60, median_sellers * 2.0))
+        measured_inputs += len(seller_counts)
+    elif offer_counts:
+        median_offers = median(offer_counts)
+        metadata["median_offer_count"] = median_offers
+        metadata["offer_count_semantics"] = "Offer count is not unique seller count."
+        subscores["offer_density_attractiveness"] = clamp(90 - min(60, median_offers * 2.0))
+        measured_inputs += len(offer_counts)
     if review_counts:
         median_reviews = median(review_counts)
         p75_reviews = _percentile(review_counts, 75)
@@ -304,9 +342,12 @@ def competition_component(
         )
         if median_reviews >= 1000 or p75_reviews >= 5000:
             warnings.append("High review moat.")
-            score -= 25
+            subscores["review_moat_attractiveness"] = 25
         elif median_reviews >= 500:
-            score -= 15
+            subscores["review_moat_attractiveness"] = 45
+        else:
+            subscores["review_moat_attractiveness"] = 80
+        measured_inputs += len(review_counts)
     else:
         warnings.append("Review moat evidence is missing; confidence is lower.")
 
@@ -315,11 +356,14 @@ def competition_component(
         top_share = max(brand_counts.values()) / len(brands)
         metadata["top_brand_share_percent"] = round(top_share * 100, 1)
         if top_share >= 0.55:
-            score -= 15
+            subscores["brand_fragmentation_attractiveness"] = 35
             warnings.append("Dominant brand concentration.")
         elif len(brand_counts) >= max(3, len(brands) // 2):
-            score += 8
+            subscores["brand_fragmentation_attractiveness"] = 85
             metadata["brand_market"] = "fragmented_brand_market"
+        else:
+            subscores["brand_fragmentation_attractiveness"] = 60
+        measured_inputs += len(brands)
     else:
         warnings.append("Brand concentration is unknown.")
 
@@ -335,22 +379,31 @@ def competition_component(
             }
         )
         if compression >= 60:
-            score -= 18
             warnings.append("Price competition is high.")
+            subscores["price_dispersion_attractiveness"] = 35
+        else:
+            subscores["price_dispersion_attractiveness"] = 70
+        measured_inputs += len(prices)
 
-    coverage = 20
+    if len(comparables) >= 3:
+        subscores["substitute_density_attractiveness"] = clamp(80 - max(0, len(comparables) - 5) * 4)
+    metadata["subscores"] = subscores
+    value = _mean(subscores.values()) if subscores else None
+
+    coverage = 0
     coverage += 20 if prices else 0
-    coverage += 20 if seller_counts else 0
+    coverage += 20 if offer_counts or seller_counts else 0
     coverage += 25 if review_counts else 0
     coverage += 15 if brands else 0
+    coverage += 20 if len(comparables) >= 3 else 0
     confidence = coverage - (10 if not review_counts else 0)
     return component(
         name="competition",
-        value=score,
+        value=value,
         status="measured",
         coverage=coverage,
         confidence=confidence,
-        evidence_count=len(prices) + len(seller_counts) + len(review_counts) + len(brands),
+        evidence_count=measured_inputs,
         freshness_days=None,
         evidence_ids=[],
         explanation="Competition attractiveness is scored so higher is better: fragmented, less review-heavy, less compressed markets score higher.",
@@ -495,7 +548,7 @@ def data_quality_component(
     history = historical_depth_score(derived_signals)
     sources = {observation.get("source") for observation in observations if observation.get("source")}
     independence = min(100, len(sources) * 25)
-    consistency = internal_consistency_score(economics, comparable_rows)
+    consistency = internal_consistency_score(economics, included_comparables)
     value = (
         EVIDENCE_CONFIDENCE_WEIGHTS["evidence_coverage"] * coverage_score
         + EVIDENCE_CONFIDENCE_WEIGHTS["comparable_relevance"] * comparable_relevance
@@ -559,9 +612,9 @@ def validation_readiness(
     constraint_evaluation: dict[str, Any],
     insights: list[dict[str, Any]],
     derived_signals: dict[str, Any],
+    direct_demand_available: bool,
 ) -> float:
-    risk_evaluated = any(insight.get("insight_type") == InsightType.RISK_FLAG.value for insight in insights)
-    direct_demand = False
+    risk_evaluated = constraint_evaluation.get("evaluation_status") == "completed"
     history_measured = any(
         (row or {}).get("status") == "measured"
         for row in (derived_signals.get("windows") or {}).values()
@@ -570,10 +623,10 @@ def validation_readiness(
         "relevant_comparables": 100 if included_comparables else 0,
         "price_data": 100 if economics.get("modeled_price") is not None else 0,
         "fee_data": 100 if economics.get("fee_source") == "amazon_spapi_product_fees" else 0,
-        "constraints_evaluated": 100 if constraint_evaluation.get("rule_profile_id") else 0,
-        "risk_evaluated": 100 if risk_evaluated or constraint_evaluation.get("risk_flags") is not None else 0,
+        "constraints_evaluated": 100 if constraint_evaluation.get("evaluation_status") == "completed" else 0,
+        "risk_evaluated": 100 if risk_evaluated else 0,
         "historical_data": 100 if history_measured else 0,
-        "direct_demand_data": 100 if direct_demand else 0,
+        "direct_demand_data": 100 if direct_demand_available else 0,
         "supplier_validation": 100 if supplier_validation.get("viable_quote_count") else 0,
     }
     return round(sum(READINESS_WEIGHTS[key] * value for key, value in checklist.items()), 1)
@@ -675,7 +728,7 @@ def _missing_evidence(
             missing.add(f"Missing {name.replace('_', ' ')} evidence")
     if not included_comparables:
         missing.add("Need relevant comparable ASINs")
-    if economics.get("fee_source") != "amazon_spapi_product_fees":
+    if economics.get("fee_source") != "amazon_spapi_product_fees" and included_comparables:
         missing.add("Need live Amazon fee estimate")
     if not any((row or {}).get("status") == "measured" for row in (derived_signals.get("windows") or {}).values()):
         missing.add("Need historical marketplace snapshots")
@@ -696,8 +749,6 @@ def _blocking_issues(
         issues.append("Modeled max landed cost is not viable.")
     if components["risk"]["value"] is not None and components["risk"]["value"] < 25:
         issues.append("Severe risk flags detected.")
-    if comparable_rows and not any(row.get("relevance_status") in {"included", "manually_included"} for row in comparable_rows):
-        issues.append("No comparable ASIN passed relevance filtering.")
     return issues
 
 
@@ -763,6 +814,24 @@ def _signal_ids(market_signals: list[dict[str, Any]], signal_types: set[str]) ->
         if observation_id:
             ids.append(str(observation_id))
     return ids
+
+
+def _direct_demand_sources(market_signals: list[dict[str, Any]]) -> list[str]:
+    sources = []
+    direct_source_tokens = (
+        "product_opportunity_explorer",
+        "brand_analytics",
+        "direct_demand",
+    )
+    for signal in market_signals:
+        source = str(signal.get("source") or "")
+        source_key = source.lower()
+        metadata = signal.get("metadata") or {}
+        if metadata.get("direct_demand") is True or any(token in source_key for token in direct_source_tokens):
+            label = source or str(metadata.get("source") or "direct_demand")
+            if label and label not in sources:
+                sources.append(label)
+    return sources
 
 
 def _bsr_score(rank: float) -> float:

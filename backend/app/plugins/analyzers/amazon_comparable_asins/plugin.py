@@ -120,6 +120,10 @@ def _cost_models(fees: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "assumptions": {
                     "total_amazon_fees": metrics.get("total_amazon_fees"),
                     "fee_estimate_source": "amazon_spapi_product_fees",
+                    "fee_source": metadata.get("fee_source") or "amazon_product_fees",
+                    "status": metadata.get("status") or "live_spapi",
+                    "confidence": metadata.get("confidence") or "high",
+                    "modeled_price_source": metadata.get("modeled_price_source") or "amazon_pricing",
                     "comparable_asin": row["asin"],
                     "fee_estimate_id": metadata.get("fee_estimate_id"),
                     "fee_components": metadata.get("fee_components") or [],

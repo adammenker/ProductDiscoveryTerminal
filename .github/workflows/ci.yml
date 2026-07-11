@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pdt
+          POSTGRES_PASSWORD: pdt
+          POSTGRES_DB: pdt
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pdt -d pdt"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://pdt:pdt@localhost:5432/pdt
+      APP_ENV: test
+      AMAZON_SP_API_ENABLED: "false"
+      ETSY_API_ENABLED: "false"
+      ALIBABA_API_ENABLED: "false"
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install backend dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Apply migrations
+        run: alembic upgrade head
+
+      - name: Migration smoke test
+        run: alembic current
+
+      - name: Run tests
+        run: pytest
+
+      - name: Evaluation CLI smoke test
+        run: python -m app.evaluation --out /tmp/pdt-evaluation-smoke --k 5
+
+      - name: Run Ruff
+        run: ruff check app
+
+      - name: Run mypy
+        run: mypy app
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build

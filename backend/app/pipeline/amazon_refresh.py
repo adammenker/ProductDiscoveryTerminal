@@ -71,6 +71,7 @@ class AmazonRefreshPipeline:
         for product in products:
             catalog_limit = max(1, min(int(self.settings.amazon_refresh_catalog_limit), 20))
             pricing_limit = max(1, min(int(self.settings.amazon_refresh_pricing_limit), 20))
+            comparable_service = ComparableService(self.db)
             catalog = runner.run(
                 PipelineRunRequest(
                     plugins=["amazon_catalog_spapi"],
@@ -88,12 +89,13 @@ class AmazonRefreshPipeline:
             summaries.extend(catalog.plugin_runs)
             errors.extend(catalog.errors)
 
-            asins = self._asins(product.id)
-            if not asins:
+            comparable_service.sync_product(product.id, price_aware=False, create_snapshots=False)
+            pricing_candidates = comparable_service.pricing_candidate_asins(product.id)
+            if not pricing_candidates:
                 errors.append(f"{product.canonical_name}: Amazon Catalog returned no comparable ASINs.")
                 continue
 
-            pricing_asins = self._pricing_asins(product.id, asins)
+            pricing_asins = self._pricing_asins(product.id, pricing_candidates)
             if pricing_asins:
                 pricing = runner.run(
                     PipelineRunRequest(
@@ -112,7 +114,9 @@ class AmazonRefreshPipeline:
                 summaries.extend(pricing.plugin_runs)
                 errors.extend(pricing.errors)
 
-            fee_inputs = self._fee_inputs(product.id, asins)
+            comparable_service.sync_product(product.id, price_aware=True, create_snapshots=False)
+            effective_asins = [row.asin for row in comparable_service.get_effective_comparables(product.id)]
+            fee_inputs = self._fee_inputs(product.id, effective_asins)
             if fee_inputs:
                 fees = runner.run(
                     PipelineRunRequest(
@@ -134,9 +138,12 @@ class AmazonRefreshPipeline:
                 summaries.extend(fees.plugin_runs)
                 errors.extend(fees.errors)
 
+            comparable_service.sync_product(product.id, price_aware=True, create_snapshots=False)
+            comparable_service.create_snapshot_cohort(product.id)
+
         comparable_service = ComparableService(self.db)
         for product_id in product_ids:
-            comparable_service.sync_product(product_id)
+            comparable_service.sync_product(product_id, create_snapshots=False)
 
         analyzer_runs = AnalyzerRunner(self.db).run(product_ids)
         summaries.extend(_run_summary(run) for run in analyzer_runs)
@@ -230,7 +237,9 @@ class AmazonRefreshPipeline:
         limit = max(0, min(int(self.settings.amazon_refresh_fee_limit), len(asins)))
         inputs: list[dict[str, Any]] = []
         for asin in asins:
-            modeled_price = round(float(prices.get(asin, 24.99)), 2)
+            if asin not in prices:
+                continue
+            modeled_price = round(float(prices[asin]), 2)
             if any(abs(existing_price - modeled_price) <= 0.01 for existing_price in fresh_fees.get(asin, [])):
                 continue
             inputs.append({"asin": asin, "modeled_price": modeled_price})

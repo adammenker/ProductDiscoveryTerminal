@@ -1,3 +1,11 @@
+from app.models.discovery import (
+    CandidateCluster,
+    CandidateOrigin,
+    DiscoveryRun,
+    DiscoveryRunResult,
+    SeedKeyword,
+    SeedList,
+)
 from app.models.enums import (
     InsightType,
     MarketSignalType,
@@ -31,8 +39,12 @@ from app.models.validation import (
 __all__ = [
     "CostModel",
     "BacktestRun",
+    "CandidateCluster",
+    "CandidateOrigin",
     "ComparableAsin",
     "ConstraintEvaluation",
+    "DiscoveryRun",
+    "DiscoveryRunResult",
     "InsightType",
     "MarketSignal",
     "MarketSignalType",
@@ -53,6 +65,8 @@ __all__ = [
     "RecommendationFeedback",
     "RunStatus",
     "RuleProfile",
+    "SeedKeyword",
+    "SeedList",
     "SupplierQuote",
     "SupplierSignal",
 ]

@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import (
     backtests,
+    discovery,
     health,
     ingestion,
     opportunities,
@@ -36,6 +37,7 @@ app.include_router(products.router)
 app.include_router(opportunities.router)
 app.include_router(plugins.router)
 app.include_router(ingestion.router)
+app.include_router(discovery.router)
 app.include_router(security.router)
 app.include_router(validation.router)
 app.include_router(backtests.router)
