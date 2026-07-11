@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import uuid
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
@@ -10,6 +11,7 @@ from difflib import SequenceMatcher
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models import (
     CandidateCluster,
     CandidateOrigin,
@@ -23,10 +25,11 @@ from app.models import (
     SeedKeyword,
     SeedList,
 )
+from app.pipeline.amazon_refresh import AmazonRefreshPipeline
 from app.pipeline.ingestion_runner import IngestionRunner
 from app.plugins.registry import get_ingestion_plugins
 from app.schemas.discovery import DiscoveryRunCreate, SeedListCreate
-from app.schemas.plugin import IngestionPlugin, IngestionQuery
+from app.schemas.plugin import IngestionPlugin, IngestionQuery, PipelineRunResponse
 from app.services.comparable_service import ComparableService
 from app.services.normalization_service import normalize_alias
 from app.services.scoring_service import ScoringService
@@ -64,6 +67,7 @@ class KeywordSpec:
 class DiscoveryService:
     def __init__(self, db: Session) -> None:
         self.db = db
+        self.settings = get_settings()
 
     def create_seed_list(self, payload: SeedListCreate) -> SeedList:
         name = _clean(payload.name)
@@ -115,6 +119,7 @@ class DiscoveryService:
         payload: DiscoveryRunCreate,
         *,
         plugin_overrides: list[IngestionPlugin] | None = None,
+        refresh_pipeline_factory: Callable[[Session], AmazonRefreshPipeline] | None = None,
     ) -> DiscoveryRun:
         keywords = self._keyword_specs(payload)
         plugin_names = payload.plugins or DEFAULT_DISCOVERY_PLUGINS
@@ -132,6 +137,12 @@ class DiscoveryService:
         self.db.add(run)
         self.db.commit()
         self.db.refresh(run)
+        enrich_top_n = self._enrich_top_n(payload, plugin_overrides, refresh_pipeline_factory)
+        min_cluster_confidence = (
+            float(payload.min_cluster_confidence)
+            if payload.min_cluster_confidence is not None
+            else float(self.settings.discovery_min_cluster_confidence)
+        )
 
         errors = [f"Unknown ingestion plugin: {name}" for name in missing_plugins]
         product_ids: set[uuid.UUID] = set()
@@ -172,6 +183,7 @@ class DiscoveryService:
                         cluster_key.label,
                         cluster_observations,
                     )
+                    cluster_confidence = _cluster_confidence(cluster_key, cluster_observations)
                     cluster = CandidateCluster(
                         discovery_run_id=run.id,
                         seed_keyword_id=keyword.seed_keyword_id,
@@ -184,6 +196,8 @@ class DiscoveryService:
                             "observation_count": len(cluster_observations),
                             "created_product": created,
                             "cluster_method": cluster_key.method,
+                            "cluster_confidence": cluster_confidence,
+                            "enrichment_eligible": cluster_confidence >= min_cluster_confidence,
                         },
                     )
                     self.db.add(cluster)
@@ -203,7 +217,19 @@ class DiscoveryService:
             if keyword_had_result:
                 keyword_successes += 1
 
-        scores = self._sync_and_score(product_ids)
+        preliminary_scores = self._sync_and_score(product_ids)
+        enrichment_candidates = self._enrichment_candidates(
+            run=run,
+            scores=preliminary_scores,
+            limit=enrich_top_n,
+            min_cluster_confidence=min_cluster_confidence,
+        )
+        enrichment = self._enrich_products(
+            enrichment_candidates,
+            refresh_pipeline_factory=refresh_pipeline_factory,
+        )
+        errors.extend(enrichment["errors"])
+        scores = self._latest_scores(product_ids)
         results_created = self._create_results(run, scores)
         status = _status(
             keyword_count=len(keywords),
@@ -228,7 +254,21 @@ class DiscoveryService:
             "rejected_results": 0,
             "products_matched_or_created": len(product_ids),
             "results_created": results_created,
-            "enrichment_state": _enrichment_state(scores),
+            "enrichment_top_n": enrich_top_n,
+            "min_cluster_confidence": min_cluster_confidence,
+            "enrichment_candidates": len(enrichment_candidates),
+            "enrichment_requested": enrichment["requested"],
+            "enriched_candidates": enrichment["completed"],
+            "enrichment_failed": enrichment["failed"],
+            "enrichment_observations_created": enrichment["observations_created"],
+            "enrichment_errors": enrichment["errors"],
+            "enriched_product_ids": [str(product_id) for product_id in enrichment["product_ids"]],
+            "enrichment_state": _enrichment_state(
+                scores,
+                requested=int(enrichment["requested"]),
+                completed=int(enrichment["completed"]),
+                configured_top_n=enrich_top_n,
+            ),
             "errors": errors,
         }
         self.db.commit()
@@ -411,6 +451,121 @@ class DiscoveryService:
             scores[product_id] = scoring_service.score_product(product_id)
         return scores
 
+    def _latest_scores(self, product_ids: set[uuid.UUID]) -> dict[uuid.UUID, OpportunityScore | None]:
+        rows = list(
+            self.db.scalars(
+                select(OpportunityScore)
+                .where(OpportunityScore.product_id.in_(product_ids))
+                .order_by(OpportunityScore.product_id, OpportunityScore.created_at.desc())
+            )
+        )
+        latest: dict[uuid.UUID, OpportunityScore | None] = {product_id: None for product_id in product_ids}
+        for row in rows:
+            latest.setdefault(row.product_id, row)
+            if latest[row.product_id] is None:
+                latest[row.product_id] = row
+        return latest
+
+    def _enrich_top_n(
+        self,
+        payload: DiscoveryRunCreate,
+        plugin_overrides: list[IngestionPlugin] | None,
+        refresh_pipeline_factory: Callable[[Session], AmazonRefreshPipeline] | None,
+    ) -> int:
+        if payload.enrich_top_n is not None:
+            return max(0, min(int(payload.enrich_top_n), 100))
+        if plugin_overrides is not None and refresh_pipeline_factory is None:
+            return 0
+        return max(0, min(int(self.settings.discovery_enrich_top_n), 100))
+
+    def _enrichment_candidates(
+        self,
+        *,
+        run: DiscoveryRun,
+        scores: dict[uuid.UUID, OpportunityScore | None],
+        limit: int,
+        min_cluster_confidence: float,
+    ) -> list[uuid.UUID]:
+        if limit <= 0:
+            return []
+        rows: list[tuple[uuid.UUID, float, float, datetime]] = []
+        clusters = list(
+            self.db.scalars(
+                select(CandidateCluster).where(CandidateCluster.discovery_run_id == run.id)
+            )
+        )
+        for cluster in clusters:
+            confidence = float((cluster.metadata_ or {}).get("cluster_confidence") or 0)
+            if confidence < min_cluster_confidence:
+                continue
+            product_id = self.db.scalar(
+                select(CandidateOrigin.product_id)
+                .where(CandidateOrigin.candidate_cluster_id == cluster.id)
+                .limit(1)
+            )
+            if product_id is None:
+                continue
+            score = scores.get(product_id)
+            rows.append(
+                (
+                    product_id,
+                    float(score.final_score if score else 0),
+                    confidence,
+                    cluster.created_at,
+                )
+            )
+        selected: list[uuid.UUID] = []
+        seen: set[uuid.UUID] = set()
+        rows.sort(key=lambda row: (row[1], row[2], row[3]), reverse=True)
+        for product_id, _score, _confidence, _created_at in rows:
+            if product_id in seen:
+                continue
+            selected.append(product_id)
+            seen.add(product_id)
+            if len(selected) >= limit:
+                break
+        return selected
+
+    def _enrich_products(
+        self,
+        product_ids: list[uuid.UUID],
+        *,
+        refresh_pipeline_factory: Callable[[Session], AmazonRefreshPipeline] | None,
+    ) -> dict:
+        if not product_ids:
+            return {
+                "requested": 0,
+                "completed": 0,
+                "failed": 0,
+                "observations_created": 0,
+                "errors": [],
+                "product_ids": [],
+            }
+        factory = refresh_pipeline_factory or AmazonRefreshPipeline
+        refresh = factory(self.db)
+        completed = 0
+        failed = 0
+        observations_created = 0
+        errors: list[str] = []
+        enriched: list[uuid.UUID] = []
+        for product_id in product_ids:
+            response: PipelineRunResponse = refresh.run_product(product_id)
+            observations_created += response.observations_created
+            if response.status == "failed":
+                failed += 1
+            else:
+                completed += 1
+                enriched.append(product_id)
+            errors.extend(response.errors)
+        return {
+            "requested": len(product_ids),
+            "completed": completed,
+            "failed": failed,
+            "observations_created": observations_created,
+            "errors": errors,
+            "product_ids": enriched,
+        }
+
     def _create_results(
         self,
         run: DiscoveryRun,
@@ -508,6 +663,15 @@ def _label_from_tokens(tokens: list[str], *, fallback: str | None) -> str:
     return _clean(fallback or "unknown product")
 
 
+def _cluster_confidence(cluster_key: _ClusterKey, observations: list[RawObservation]) -> float:
+    if not observations:
+        return 0.0
+    base = 0.72 if cluster_key.method == "amazon_product_type" else 0.62
+    observation_bonus = min(max(len(observations) - 1, 0), 4) * 0.05
+    label_penalty = 0.2 if cluster_key.normalized_key in {"unknown", "unknown product"} else 0.0
+    return round(max(0.0, min(0.95, base + observation_bonus - label_penalty)), 2)
+
+
 def _most_common_metadata(observations: list[RawObservation], *keys: str) -> str | None:
     values: list[str] = []
     for observation in observations:
@@ -540,11 +704,21 @@ def _status(
     return "success"
 
 
-def _enrichment_state(scores: dict[uuid.UUID, OpportunityScore | None]) -> str:
+def _enrichment_state(
+    scores: dict[uuid.UUID, OpportunityScore | None],
+    *,
+    requested: int,
+    completed: int,
+    configured_top_n: int,
+) -> str:
     if not scores:
         return "no_candidates"
-    if all(score is not None for score in scores.values()):
-        return "scored"
-    if any(score is not None for score in scores.values()):
-        return "partially_scored"
-    return "pending_scoring"
+    if configured_top_n <= 0:
+        return "preliminary_scored"
+    if requested == 0:
+        return "no_enrichment_candidates"
+    if completed == requested:
+        return "enriched"
+    if completed > 0:
+        return "partially_enriched"
+    return "enrichment_failed"

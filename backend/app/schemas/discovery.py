@@ -48,6 +48,8 @@ class DiscoveryRunCreate(BaseModel):
     keywords: list[DiscoveryKeywordInput] = Field(default_factory=list)
     plugins: list[str] | None = None
     limit_per_keyword: int = Field(default=10, ge=1, le=50)
+    enrich_top_n: int | None = Field(default=None, ge=0, le=100)
+    min_cluster_confidence: float | None = Field(default=None, ge=0, le=1)
 
 
 class CandidateClusterResponse(BaseModel):

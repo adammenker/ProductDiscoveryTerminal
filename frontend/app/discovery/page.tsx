@@ -211,11 +211,15 @@ function StartRunPanel({
     seed_list_id?: string | null;
     keywords?: { keyword: string }[];
     limit_per_keyword: number;
+    enrich_top_n: number;
+    min_cluster_confidence: number;
   }) => void;
 }) {
   const [seedListId, setSeedListId] = useState("");
   const [keywords, setKeywords] = useState("");
   const [limit, setLimit] = useState("10");
+  const [enrichTopN, setEnrichTopN] = useState("20");
+  const [minConfidence, setMinConfidence] = useState("0.60");
   const parsedKeywords = parseKeywords(keywords);
   const canSubmit = Boolean(seedListId || parsedKeywords.length) && !isPending;
 
@@ -225,7 +229,9 @@ function StartRunPanel({
     onStart({
       seed_list_id: seedListId || null,
       keywords: seedListId ? [] : parsedKeywords.map((keyword) => ({ keyword })),
-      limit_per_keyword: Math.max(1, Math.min(Number(limit) || 10, 50))
+      limit_per_keyword: Math.max(1, Math.min(Number(limit) || 10, 50)),
+      enrich_top_n: Math.max(0, Math.min(Number(enrichTopN) || 0, 100)),
+      min_cluster_confidence: Math.max(0, Math.min(Number(minConfidence) || 0.6, 1))
     });
   }
 
@@ -254,15 +260,35 @@ function StartRunPanel({
             className="w-full resize-y border border-terminal-line bg-terminal-bg px-3 py-2 text-sm outline-none placeholder:text-terminal-muted focus:border-terminal-green"
           />
         ) : null}
-        <label className="block">
-          <span className="mb-1 block font-mono text-[11px] uppercase text-terminal-muted">Limit per keyword</span>
-          <input
-            value={limit}
-            onChange={(event) => setLimit(event.target.value)}
-            inputMode="numeric"
-            className="h-10 w-full border border-terminal-line bg-terminal-bg px-3 text-sm outline-none focus:border-terminal-green"
-          />
-        </label>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <label className="block">
+            <span className="mb-1 block font-mono text-[11px] uppercase text-terminal-muted">Limit/keyword</span>
+            <input
+              value={limit}
+              onChange={(event) => setLimit(event.target.value)}
+              inputMode="numeric"
+              className="h-10 w-full border border-terminal-line bg-terminal-bg px-3 text-sm outline-none focus:border-terminal-green"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block font-mono text-[11px] uppercase text-terminal-muted">Enrich top N</span>
+            <input
+              value={enrichTopN}
+              onChange={(event) => setEnrichTopN(event.target.value)}
+              inputMode="numeric"
+              className="h-10 w-full border border-terminal-line bg-terminal-bg px-3 text-sm outline-none focus:border-terminal-green"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block font-mono text-[11px] uppercase text-terminal-muted">Min confidence</span>
+            <input
+              value={minConfidence}
+              onChange={(event) => setMinConfidence(event.target.value)}
+              inputMode="decimal"
+              className="h-10 w-full border border-terminal-line bg-terminal-bg px-3 text-sm outline-none focus:border-terminal-green"
+            />
+          </label>
+        </div>
         <button
           type="submit"
           disabled={!canSubmit}
@@ -340,6 +366,12 @@ function RunDetailPanel({ run }: { run?: DiscoveryRun }) {
               <span className="border border-terminal-line px-2 py-1 font-mono text-xs uppercase text-terminal-muted">
                 {String(run.summary.enrichment_state ?? "unknown")}
               </span>
+              <span className="border border-terminal-line px-2 py-1 font-mono text-xs text-terminal-muted">
+                enrich top {numberSummary(run, "enrichment_top_n")}
+              </span>
+              <span className="border border-terminal-line px-2 py-1 font-mono text-xs text-terminal-muted">
+                min conf {formatConfidence(run.summary.min_cluster_confidence)}
+              </span>
               {run.source_plugins.map((plugin) => (
                 <span key={plugin} className="border border-terminal-line px-2 py-1 font-mono text-xs text-terminal-muted">
                   {plugin}
@@ -360,6 +392,8 @@ function RunDetailPanel({ run }: { run?: DiscoveryRun }) {
           <Metric label="Matched" value={numberSummary(run, "candidates_matched")} tone="amber" />
           <Metric label="Results" value={run.results.length} />
           <Metric label="Origins" value={run.origins.length} />
+          <Metric label="Enriched" value={numberSummary(run, "enriched_candidates")} tone="green" />
+          <Metric label="Enrich failed" value={numberSummary(run, "enrichment_failed")} tone={numberSummary(run, "enrichment_failed") ? "rose" : "neutral"} />
           <Metric label="Rejected" value={numberSummary(run, "rejected_results")} />
           <Metric label="Failed" value={numberSummary(run, "keywords_failed")} tone={errors.length ? "rose" : "neutral"} />
         </div>
@@ -540,6 +574,10 @@ function parseKeywords(value: string) {
 function numberSummary(run: DiscoveryRun, key: string) {
   const value = run.summary[key];
   return typeof value === "number" ? value : 0;
+}
+
+function formatConfidence(value: unknown) {
+  return typeof value === "number" ? value.toFixed(2) : "--";
 }
 
 function summaryErrors(run: DiscoveryRun) {

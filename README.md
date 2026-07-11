@@ -23,7 +23,7 @@ Services:
 - Health: <http://localhost:8000/health>
 - Postgres: `localhost:5432`
 
-Open the frontend, type a product keyword in the dashboard search bar, and fetch real Amazon evidence through the SP-API research flow. Use `/discovery` for seed-list based scanner runs that can turn broad keywords into multiple candidate concepts. Mock/sample plugins are still available for explicit development runs, but the default product research UI does not seed demo data.
+Open the frontend, type a product keyword in the dashboard search bar, and fetch real Amazon evidence through the SP-API research flow. Use `/discovery` for seed-list based scanner runs that can turn broad keywords into multiple candidate concepts, preliminarily rank them, enrich the top candidates with pricing/fees, and finalize rankings. Mock/sample plugins are still available for explicit development runs, but the default product research UI does not seed demo data.
 
 ## Environment
 
@@ -121,6 +121,8 @@ AMAZON_LWA_CLIENT_SECRET=replace_me
 AMAZON_LWA_REFRESH_TOKEN=replace_me
 STORE_RAW_AMAZON_PAYLOADS=false
 RAW_PAYLOAD_RETENTION_DAYS=7
+DISCOVERY_ENRICH_TOP_N=20
+DISCOVERY_MIN_CLUSTER_CONFIDENCE=0.60
 ```
 
 The sandbox endpoint defaults to `https://sandbox.sellingpartnerapi-na.amazon.com` for North America. Production defaults to `https://sellingpartnerapi-na.amazon.com` when `AMAZON_SP_API_ENV=production` and `AMAZON_SP_API_ENDPOINT` is not explicitly set. The backend also accepts the older names `AMAZON_SP_API_ENVIRONMENT` and `AMAZON_REFRESH_TOKEN` for compatibility.

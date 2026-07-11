@@ -641,6 +641,8 @@ export type DiscoveryRunInput = {
   keywords?: DiscoveryKeywordInput[];
   plugins?: string[] | null;
   limit_per_keyword?: number;
+  enrich_top_n?: number | null;
+  min_cluster_confidence?: number | null;
 };
 
 export type CandidateCluster = {

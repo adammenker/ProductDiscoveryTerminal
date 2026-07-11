@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     amazon_fees_request_interval_seconds: float = 1.1
     store_raw_amazon_payloads: bool = False
     raw_payload_retention_days: int = 7
+    discovery_enrich_top_n: int = 20
+    discovery_min_cluster_confidence: float = 0.60
     cost_ceiling_marketplace_fee_rate: float = 0.15
     cost_ceiling_fulfillment_fee_rate: float = 0.13
     cost_ceiling_fulfillment_fee_floor: float = 3.25
