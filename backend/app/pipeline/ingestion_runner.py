@@ -36,6 +36,11 @@ class IngestionRunner:
             created = 0
             skipped = 0
             for dto in observations:
+                dto.metadata = {
+                    **dto.metadata,
+                    **({"source_query": query.query} if query.query and "source_query" not in dto.metadata else {}),
+                    **({"source_category": query.category} if query.category and "source_category" not in dto.metadata else {}),
+                }
                 dto.metadata.pop("request_errors", None)
                 content_hash = observation_content_hash(dto)
                 exists = self.db.scalar(

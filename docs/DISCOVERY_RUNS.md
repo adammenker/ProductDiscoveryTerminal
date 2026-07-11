@@ -17,6 +17,8 @@ seed list
 -> run summary
 ```
 
+`POST /discovery/runs` creates a queued run and returns immediately. A single in-process worker picks up queued discovery runs one at a time, updates `status` plus `summary.progress_stage` / `summary.progress_percent`, and the `/discovery` UI polls the run list while work is active.
+
 Broad queries may produce several candidates. For example, `travel organizer` can cluster into:
 
 ```text
@@ -72,9 +74,14 @@ Defaults:
 ```env
 DISCOVERY_ENRICH_TOP_N=20
 DISCOVERY_MIN_CLUSTER_CONFIDENCE=0.60
+DISCOVERY_ENRICHMENT_REQUEST_INTERVAL_SECONDS=2.0
+DISCOVERY_ENRICH_MAX_PER_SOURCE_QUERY=3
+DISCOVERY_ENRICH_MAX_PER_OPPORTUNITY=1
 ```
 
-The `/discovery` UI can override both values per run. Set `enrich_top_n` to `0` to run catalog-only discovery.
+The `/discovery` UI can override the top-N and confidence values per run. Set `enrich_top_n` to `0` to run catalog-only discovery. Candidates are selected round-robin across source queries and capped per opportunity, preventing one niche or a set of listing variants from consuming the enrichment budget. `DISCOVERY_ENRICHMENT_REQUEST_INTERVAL_SECONDS` adds a pause between full Amazon refreshes, while the SP-API client separately paces catalog, pricing, and fee operations.
+
+Final results are ranked as opportunity concepts. Brand, color, size, material, and pack variants collapse beneath a representative candidate, while accessories remain separate. Every score includes `data_readiness` (`catalog_only`, `partially_enriched`, `amazon_enriched`, or `validated`) and incomplete evidence receives a visible score factor before ranking.
 
 ## API
 
@@ -93,5 +100,7 @@ curl -X POST http://localhost:8000/discovery/runs \
   -H 'Content-Type: application/json' \
   -d '{"keywords":[{"keyword":"travel organizer"}],"limit_per_keyword":10,"enrich_top_n":20,"min_cluster_confidence":0.6}'
 ```
+
+The create response may have `status: "queued"` or `status: "running"`. Poll `GET /discovery/runs/{run_id}` or refresh the `/discovery` page to follow progress through catalog scan, preliminary scoring, enrichment, and final ranking.
 
 The default plugin list is `amazon_catalog_spapi`. Live Amazon credentials are required for live runs, but tests use fixture plugins.

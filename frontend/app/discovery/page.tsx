@@ -33,7 +33,8 @@ export default function DiscoveryPage() {
   });
   const runs = useQuery({
     queryKey: discoveryKeys.runs,
-    queryFn: () => api.discoveryRuns(25)
+    queryFn: () => api.discoveryRuns(25),
+    refetchInterval: 3000
   });
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [lastCreatedRun, setLastCreatedRun] = useState<DiscoveryRun | null>(null);
@@ -295,7 +296,7 @@ function StartRunPanel({
           className="inline-flex h-10 items-center justify-center gap-2 border border-terminal-green/70 bg-terminal-green/10 px-3 font-mono text-xs uppercase tracking-[0.12em] text-terminal-green hover:bg-terminal-green/15 disabled:cursor-not-allowed disabled:border-terminal-line disabled:bg-terminal-bg disabled:text-terminal-muted"
         >
           {isPending ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
-          Run scanner
+          Queue scanner
         </button>
       </form>
       {error ? <ErrorLine message={error} /> : null}
@@ -353,8 +354,12 @@ function RunDetailPanel({ run }: { run?: DiscoveryRun }) {
   if (!run) {
     return <EmptyState label="No discovery run selected" />;
   }
+  const opportunityGroups = groupOpportunityResults(run.results);
 
   const errors = summaryErrors(run);
+  const progressPercent = progressSummary(run, "progress_percent");
+  const progressStage = typeof run.summary.progress_stage === "string" ? run.summary.progress_stage : null;
+  const progressMessage = typeof run.summary.progress_message === "string" ? run.summary.progress_message : null;
   return (
     <div className="space-y-6">
       <section className="border border-terminal-line bg-terminal-panel/70 p-4">
@@ -385,9 +390,25 @@ function RunDetailPanel({ run }: { run?: DiscoveryRun }) {
           </div>
         </div>
 
+        {progressStage ? (
+          <div className="mt-5 border border-terminal-line bg-terminal-bg p-3">
+            <div className="flex items-center justify-between gap-3 font-mono text-[11px] uppercase text-terminal-muted">
+              <span>{titleCase(progressStage)}</span>
+              <span>{progressPercent}%</span>
+            </div>
+            <div className="mt-2 h-2 border border-terminal-line bg-terminal-panel">
+              <div
+                className="h-full bg-terminal-green"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+            {progressMessage ? <div className="mt-2 text-xs text-terminal-muted">{progressMessage}</div> : null}
+          </div>
+        ) : null}
+
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Metric label="Seed keywords" value={numberSummary(run, "keywords_requested")} />
-          <Metric label="Clusters" value={run.clusters.length} />
+          <Metric label="Opportunities" value={opportunityGroups.length} />
           <Metric label="Created" value={numberSummary(run, "candidates_created")} tone="green" />
           <Metric label="Matched" value={numberSummary(run, "candidates_matched")} tone="amber" />
           <Metric label="Results" value={run.results.length} />
@@ -427,14 +448,14 @@ function RunDetailPanel({ run }: { run?: DiscoveryRun }) {
       </section>
 
       <section className="border border-terminal-line bg-terminal-panel/70 p-4">
-        <PanelTitle icon={CheckCircle2} title="Candidates" />
-        {run.results.length ? (
+        <PanelTitle icon={CheckCircle2} title="Ranked opportunities" />
+        {opportunityGroups.length ? (
           <div className="mt-4 overflow-x-auto border border-terminal-line bg-terminal-bg">
             <table className="w-full min-w-[760px] text-left text-sm">
               <thead className="bg-terminal-panel font-mono text-xs uppercase text-terminal-muted">
                 <tr>
                   <th className="border-b border-terminal-line px-3 py-2 font-medium">Rank</th>
-                  <th className="border-b border-terminal-line px-3 py-2 font-medium">Candidate</th>
+                  <th className="border-b border-terminal-line px-3 py-2 font-medium">Opportunity</th>
                   <th className="border-b border-terminal-line px-3 py-2 font-medium">Score</th>
                   <th className="border-b border-terminal-line px-3 py-2 font-medium">Recommendation</th>
                   <th className="border-b border-terminal-line px-3 py-2 font-medium">Status</th>
@@ -442,23 +463,8 @@ function RunDetailPanel({ run }: { run?: DiscoveryRun }) {
                 </tr>
               </thead>
               <tbody>
-                {run.results.map((result) => (
-                  <tr key={result.id} className="border-b border-terminal-line/70 last:border-b-0">
-                    <td className="px-3 py-2 font-mono text-xs tabular-nums">{result.rank_position ?? "--"}</td>
-                    <td className="px-3 py-2 font-medium">{titleCase(result.product_name)}</td>
-                    <td className="px-3 py-2 font-mono text-xs tabular-nums">{formatScore(result.opportunity_score)}</td>
-                    <td className="px-3 py-2"><RecommendationBadge value={result.recommendation} /></td>
-                    <td className="px-3 py-2 font-mono text-xs uppercase text-terminal-muted">{titleCase(result.status)}</td>
-                    <td className="px-3 py-2">
-                      <Link
-                        href={`/products/${result.product_id}`}
-                        className="inline-flex h-8 w-8 items-center justify-center border border-terminal-line text-terminal-muted hover:border-terminal-green hover:text-terminal-green"
-                        aria-label={`Open ${result.product_name}`}
-                      >
-                        <ExternalLink size={14} />
-                      </Link>
-                    </td>
-                  </tr>
+                {opportunityGroups.map(({ key, label, representative, members }) => (
+                  <OpportunityRows key={key} label={label} representative={representative} members={members} />
                 ))}
               </tbody>
             </table>
@@ -469,6 +475,68 @@ function RunDetailPanel({ run }: { run?: DiscoveryRun }) {
       </section>
     </div>
   );
+}
+
+function OpportunityRows({ label, representative, members }: {
+  label: string;
+  representative: DiscoveryRunResult;
+  members: DiscoveryRunResult[];
+}) {
+  return (
+    <>
+      <tr className="border-b border-terminal-line/70 bg-terminal-panel/30">
+        <td className="px-3 py-2 font-mono text-xs tabular-nums">{representative.rank_position ?? "--"}</td>
+        <td className="px-3 py-2">
+          <div className="font-medium">{titleCase(label)}</div>
+          <div className="font-mono text-[11px] text-terminal-muted">{members.length} {members.length === 1 ? "listing" : "variants"}</div>
+        </td>
+        <td className="px-3 py-2 font-mono text-xs tabular-nums">{formatScore(representative.opportunity_score)}</td>
+        <td className="px-3 py-2"><RecommendationBadge value={representative.recommendation} /></td>
+        <td className="px-3 py-2 font-mono text-xs uppercase text-terminal-muted">{titleCase(representative.status)}</td>
+        <td className="px-3 py-2">
+          <Link href={`/products/${representative.product_id}`} className="inline-flex h-8 w-8 items-center justify-center border border-terminal-line text-terminal-muted hover:border-terminal-green hover:text-terminal-green" aria-label={`Open representative ${representative.product_name}`}>
+            <ExternalLink size={14} />
+          </Link>
+        </td>
+      </tr>
+      {members.length > 1 ? (
+        <tr className="border-b border-terminal-line/70">
+          <td />
+          <td colSpan={5} className="px-3 py-2">
+            <details>
+              <summary className="cursor-pointer font-mono text-[11px] uppercase text-terminal-muted hover:text-terminal-green">View {members.length} product variants</summary>
+              <div className="mt-2 grid gap-1">
+                {members.map((member) => (
+                  <Link key={member.id} href={`/products/${member.product_id}`} className="flex items-center justify-between gap-3 border border-terminal-line px-2 py-1.5 text-xs hover:border-terminal-green hover:text-terminal-green">
+                    <span>{titleCase(member.product_name)}</span>
+                    <span className="font-mono tabular-nums">{formatScore(member.opportunity_score)}</span>
+                  </Link>
+                ))}
+              </div>
+            </details>
+          </td>
+        </tr>
+      ) : null}
+    </>
+  );
+}
+
+function groupOpportunityResults(results: DiscoveryRunResult[]) {
+  const groups = new Map<string, DiscoveryRunResult[]>();
+  for (const result of results) {
+    const key = String(result.metadata.opportunity_group_key ?? result.id);
+    groups.set(key, [...(groups.get(key) ?? []), result]);
+  }
+  return [...groups.entries()].map(([key, members]) => {
+    const representative = members.find((item) => item.metadata.is_opportunity_representative === true)
+      ?? [...members].sort((a, b) => (b.opportunity_score ?? -1) - (a.opportunity_score ?? -1))[0];
+    return {
+      key,
+      label: String(representative.metadata.opportunity_group_label ?? representative.product_name),
+      representative,
+      members: [...members].sort((a, b) => (b.opportunity_score ?? -1) - (a.opportunity_score ?? -1))
+    };
+  }).sort((a, b) => (a.representative.rank_position ?? Number.MAX_SAFE_INTEGER) - (b.representative.rank_position ?? Number.MAX_SAFE_INTEGER));
 }
 
 function ClusterCard({
@@ -548,6 +616,8 @@ function StatusBadge({ value }: { value: string }) {
       ? "border-terminal-green/60 bg-terminal-green/10 text-terminal-green"
       : value === "failed"
         ? "border-terminal-rose/60 bg-terminal-rose/10 text-terminal-rose"
+        : value === "queued" || value === "running"
+          ? "border-terminal-amber/60 bg-terminal-amber/10 text-terminal-amber"
         : "border-terminal-amber/60 bg-terminal-amber/10 text-terminal-amber";
   return (
     <span className={`inline-flex h-7 items-center border px-2 font-mono text-xs uppercase ${tone}`}>
@@ -574,6 +644,10 @@ function parseKeywords(value: string) {
 function numberSummary(run: DiscoveryRun, key: string) {
   const value = run.summary[key];
   return typeof value === "number" ? value : 0;
+}
+
+function progressSummary(run: DiscoveryRun, key: string) {
+  return Math.max(0, Math.min(numberSummary(run, key), 100));
 }
 
 function formatConfidence(value: unknown) {

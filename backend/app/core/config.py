@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     amazon_request_timeout_seconds: float = 20.0
     amazon_request_max_attempts: int = 3
     amazon_request_backoff_seconds: float = 0.5
+    amazon_catalog_request_interval_seconds: float = 1.0
     amazon_catalog_search_limit: int = 10
     amazon_fees_default_modeled_price: float = 24.99
     amazon_refresh_catalog_limit: int = 10
@@ -65,6 +66,9 @@ class Settings(BaseSettings):
     raw_payload_retention_days: int = 7
     discovery_enrich_top_n: int = 20
     discovery_min_cluster_confidence: float = 0.60
+    discovery_enrichment_request_interval_seconds: float = 2.0
+    discovery_enrich_max_per_source_query: int = 3
+    discovery_enrich_max_per_opportunity: int = 1
     cost_ceiling_marketplace_fee_rate: float = 0.15
     cost_ceiling_fulfillment_fee_rate: float = 0.13
     cost_ceiling_fulfillment_fee_floor: float = 3.25

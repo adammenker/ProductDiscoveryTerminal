@@ -26,6 +26,7 @@ from app.schemas.discovery import (
     SeedListResponse,
 )
 from app.services.discovery_service import DiscoveryService
+from app.services.discovery_worker import queue_discovery_run
 
 router = APIRouter(prefix="/discovery", tags=["discovery"])
 
@@ -50,9 +51,10 @@ def create_discovery_run(
     db: Session = Depends(get_db),
 ) -> DiscoveryRunResponse:
     try:
-        run = DiscoveryService(db).run_discovery(payload)
+        run = DiscoveryService(db).enqueue_discovery(payload)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    queue_discovery_run(str(run.id))
     return _run_response(db, run)
 
 

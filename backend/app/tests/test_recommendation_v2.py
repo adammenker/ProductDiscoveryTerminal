@@ -17,9 +17,32 @@ from app.models import (
     RawObservation,
     RunStatus,
 )
+from app.scoring.v2 import data_readiness_state
 from app.services.comparable_service import ComparableService
 from app.services.scoring_service import ScoringService
 from app.services.validation_service import ValidationService
+
+
+def test_data_readiness_distinguishes_partial_and_amazon_enriched_evidence() -> None:
+    partial = data_readiness_state(
+        included_comparables=[{"asin": "B000TEST01"}],
+        economics={"modeled_price": 24.99, "fee_source": None},
+        supplier_validation={"viable_quote_count": 0},
+        derived_signals={"windows": {}},
+        direct_demand_available=False,
+    )
+    enriched = data_readiness_state(
+        included_comparables=[{"asin": "B000TEST01"}],
+        economics={"modeled_price": 24.99, "fee_source": "amazon_spapi_product_fees"},
+        supplier_validation={"viable_quote_count": 0},
+        derived_signals={"windows": {}},
+        direct_demand_available=False,
+    )
+
+    assert partial["state"] == "partially_enriched"
+    assert partial["score_factor"] == 0.65
+    assert enriched["state"] == "amazon_enriched"
+    assert enriched["score_factor"] == 1.0
 
 
 def test_recommendation_v2_keeps_missing_components_nullable(db_session: Session) -> None:

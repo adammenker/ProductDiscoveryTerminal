@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 import uuid
 from collections import Counter, defaultdict
 from collections.abc import Callable
@@ -55,6 +56,15 @@ CONCEPT_STOP_WORDS = {
     "with",
 }
 GENERIC_PRODUCT_TYPES = {"base_product", "baseproduct", "product", "item"}
+OPPORTUNITY_VARIANT_TERMS = {
+    "black", "blue", "compact", "deluxe", "foldable", "gray", "green", "grey",
+    "large", "mini", "pink", "portable", "premium", "professional", "red",
+    "small", "stainless", "steel", "white", "xl",
+}
+OPPORTUNITY_ACCESSORY_TERMS = {
+    "adapter", "bag", "case", "cover", "holder", "liner", "rack", "replacement",
+    "shelf", "stand",
+}
 
 
 @dataclass
@@ -121,22 +131,136 @@ class DiscoveryService:
         plugin_overrides: list[IngestionPlugin] | None = None,
         refresh_pipeline_factory: Callable[[Session], AmazonRefreshPipeline] | None = None,
     ) -> DiscoveryRun:
+        plugin_names = payload.plugins or DEFAULT_DISCOVERY_PLUGINS
+        self._keyword_specs(payload)
+        run = DiscoveryRun(
+            seed_list_id=uuid.UUID(payload.seed_list_id) if payload.seed_list_id else None,
+            status="running",
+            started_at=datetime.now(UTC),
+            source_plugins=plugin_names,
+            parameters=payload.model_dump(),
+            summary=self._progress_summary(
+                stage="starting",
+                percent=0,
+                message="Discovery run starting",
+            ),
+        )
+        self.db.add(run)
+        self.db.commit()
+        self.db.refresh(run)
+        return self._process_run(
+            run,
+            payload,
+            plugin_overrides=plugin_overrides,
+            refresh_pipeline_factory=refresh_pipeline_factory,
+        )
+
+    def enqueue_discovery(self, payload: DiscoveryRunCreate) -> DiscoveryRun:
+        keywords = self._keyword_specs(payload)
+        plugin_names = payload.plugins or DEFAULT_DISCOVERY_PLUGINS
+        run = DiscoveryRun(
+            seed_list_id=uuid.UUID(payload.seed_list_id) if payload.seed_list_id else None,
+            status="queued",
+            started_at=datetime.now(UTC),
+            source_plugins=plugin_names,
+            parameters=payload.model_dump(),
+            summary=self._progress_summary(
+                stage="queued",
+                percent=0,
+                message="Discovery run queued",
+                extra={
+                    "keywords_requested": len(keywords),
+                    "plugins_requested": plugin_names,
+                    "enrichment_state": "queued",
+                },
+            ),
+        )
+        self.db.add(run)
+        self.db.commit()
+        self.db.refresh(run)
+        return run
+
+    def process_queued_run(
+        self,
+        run_id: uuid.UUID | str,
+        *,
+        plugin_overrides: list[IngestionPlugin] | None = None,
+        refresh_pipeline_factory: Callable[[Session], AmazonRefreshPipeline] | None = None,
+    ) -> DiscoveryRun:
+        run = self.get_run(run_id)
+        if run is None:
+            raise ValueError(f"Discovery run not found: {run_id}")
+        if run.status not in {"queued", "running"}:
+            return run
+        payload = DiscoveryRunCreate.model_validate(run.parameters)
+        return self._process_run(
+            run,
+            payload,
+            plugin_overrides=plugin_overrides,
+            refresh_pipeline_factory=refresh_pipeline_factory,
+        )
+
+    def _process_run(
+        self,
+        run: DiscoveryRun,
+        payload: DiscoveryRunCreate,
+        *,
+        plugin_overrides: list[IngestionPlugin] | None = None,
+        refresh_pipeline_factory: Callable[[Session], AmazonRefreshPipeline] | None = None,
+    ) -> DiscoveryRun:
+        try:
+            return self._process_run_unchecked(
+                run,
+                payload,
+                plugin_overrides=plugin_overrides,
+                refresh_pipeline_factory=refresh_pipeline_factory,
+            )
+        except Exception as exc:
+            run.status = "failed"
+            run.finished_at = datetime.now(UTC)
+            run.error_message = str(exc)[:2000]
+            run.summary = self._progress_summary(
+                stage="failed",
+                percent=100,
+                message="Discovery run failed",
+                extra={
+                    **(run.summary or {}),
+                    "errors": [str(exc)],
+                    "enrichment_state": "failed",
+                },
+            )
+            self.db.commit()
+            self.db.refresh(run)
+            raise
+
+    def _process_run_unchecked(
+        self,
+        run: DiscoveryRun,
+        payload: DiscoveryRunCreate,
+        *,
+        plugin_overrides: list[IngestionPlugin] | None = None,
+        refresh_pipeline_factory: Callable[[Session], AmazonRefreshPipeline] | None = None,
+    ) -> DiscoveryRun:
         keywords = self._keyword_specs(payload)
         plugin_names = payload.plugins or DEFAULT_DISCOVERY_PLUGINS
         plugins = plugin_overrides if plugin_overrides is not None else get_ingestion_plugins(plugin_names)
         found = {plugin.name for plugin in plugins}
         missing_plugins = sorted(set(plugin_names) - found)
-        run = DiscoveryRun(
-            seed_list_id=uuid.UUID(payload.seed_list_id) if payload.seed_list_id else None,
-            status="running",
-            started_at=datetime.now(UTC),
-            source_plugins=[plugin.name for plugin in plugins],
-            parameters=payload.model_dump(),
-            summary={},
+        run.status = "running"
+        run.source_plugins = [plugin.name for plugin in plugins]
+        self._set_run_progress(
+            run,
+            stage="catalog_scan",
+            percent=5,
+            message="Running bounded catalog searches",
+            extra={
+                "keywords_requested": len(keywords),
+                "plugins_requested": plugin_names,
+                "plugins_run": [plugin.name for plugin in plugins],
+                "enrichment_state": "catalog_scan",
+                "worker_started_at": datetime.now(UTC).isoformat(),
+            },
         )
-        self.db.add(run)
-        self.db.commit()
-        self.db.refresh(run)
         enrich_top_n = self._enrich_top_n(payload, plugin_overrides, refresh_pipeline_factory)
         min_cluster_confidence = (
             float(payload.min_cluster_confidence)
@@ -154,7 +278,7 @@ class DiscoveryService:
         keyword_successes = 0
 
         ingestion_runner = IngestionRunner(self.db)
-        for keyword in keywords:
+        for keyword_index, keyword in enumerate(keywords, start=1):
             keyword_had_result = False
             for plugin in plugins:
                 query = IngestionQuery(
@@ -216,7 +340,37 @@ class DiscoveryService:
                 self.db.commit()
             if keyword_had_result:
                 keyword_successes += 1
+            self._set_run_progress(
+                run,
+                stage="catalog_scan",
+                percent=_bounded_percent(
+                    completed=keyword_index,
+                    total=len(keywords),
+                    start=5,
+                    end=45,
+                ),
+                message="Running bounded catalog searches",
+                extra={
+                    "keywords_requested": len(keywords),
+                    "keywords_succeeded": keyword_successes,
+                    "observations_created": observations_created,
+                    "clusters_created": clusters_created,
+                    "origins_created": origins_created,
+                    "products_matched_or_created": len(product_ids),
+                },
+            )
 
+        self._set_run_progress(
+            run,
+            stage="preliminary_scoring",
+            percent=55,
+            message="Scoring discovered candidates before enrichment",
+            extra={
+                "candidates_created": candidates_created,
+                "candidates_matched": candidates_matched,
+                "products_matched_or_created": len(product_ids),
+            },
+        )
         preliminary_scores = self._sync_and_score(product_ids)
         enrichment_candidates = self._enrichment_candidates(
             run=run,
@@ -224,11 +378,52 @@ class DiscoveryService:
             limit=enrich_top_n,
             min_cluster_confidence=min_cluster_confidence,
         )
+        self._set_run_progress(
+            run,
+            stage="enrichment",
+            percent=65,
+            message="Refreshing pricing and fee evidence for top candidates",
+            extra={
+                "enrichment_top_n": enrich_top_n,
+                "min_cluster_confidence": min_cluster_confidence,
+                "enrichment_candidates": len(enrichment_candidates),
+                "enrichment_requested": len(enrichment_candidates),
+                "enriched_candidates": 0,
+                "enrichment_failed": 0,
+                "enrichment_state": "enrichment",
+            },
+        )
+
+        def enrichment_progress(completed: int, total: int, product_id: uuid.UUID) -> None:
+            self._set_run_progress(
+                run,
+                stage="enrichment",
+                percent=_bounded_percent(completed=completed, total=total, start=65, end=88),
+                message="Refreshing pricing and fee evidence for top candidates",
+                extra={
+                    "enrichment_requested": total,
+                    "enriched_candidates": completed,
+                    "latest_enriched_product_id": str(product_id),
+                },
+            )
+
         enrichment = self._enrich_products(
             enrichment_candidates,
             refresh_pipeline_factory=refresh_pipeline_factory,
+            progress_callback=enrichment_progress,
         )
         errors.extend(enrichment["errors"])
+        self._set_run_progress(
+            run,
+            stage="final_ranking",
+            percent=92,
+            message="Re-scoring and ranking discovery results",
+            extra={
+                "enriched_candidates": enrichment["completed"],
+                "enrichment_failed": enrichment["failed"],
+                "enrichment_observations_created": enrichment["observations_created"],
+            },
+        )
         scores = self._latest_scores(product_ids)
         results_created = self._create_results(run, scores)
         status = _status(
@@ -240,7 +435,8 @@ class DiscoveryService:
         run.status = status
         run.finished_at = datetime.now(UTC)
         run.error_message = "; ".join(errors)[:2000] if errors else None
-        run.summary = {
+        summary = dict(run.summary or {})
+        summary.update({
             "keywords_requested": len(keywords),
             "keywords_succeeded": keyword_successes,
             "keywords_failed": len(keywords) - keyword_successes,
@@ -255,6 +451,12 @@ class DiscoveryService:
             "products_matched_or_created": len(product_ids),
             "results_created": results_created,
             "enrichment_top_n": enrich_top_n,
+            "enrichment_max_per_source_query": int(
+                self.settings.discovery_enrich_max_per_source_query
+            ),
+            "enrichment_max_per_opportunity": int(
+                self.settings.discovery_enrich_max_per_opportunity
+            ),
             "min_cluster_confidence": min_cluster_confidence,
             "enrichment_candidates": len(enrichment_candidates),
             "enrichment_requested": enrichment["requested"],
@@ -270,10 +472,54 @@ class DiscoveryService:
                 configured_top_n=enrich_top_n,
             ),
             "errors": errors,
-        }
+            "progress_stage": "completed",
+            "progress_percent": 100,
+            "progress_message": "Discovery run complete",
+            "last_progress_at": datetime.now(UTC).isoformat(),
+        })
+        run.summary = summary
         self.db.commit()
         self.db.refresh(run)
         return run
+
+    def _set_run_progress(
+        self,
+        run: DiscoveryRun,
+        *,
+        stage: str,
+        percent: int,
+        message: str,
+        extra: dict | None = None,
+    ) -> None:
+        summary = self._progress_summary(
+            stage=stage,
+            percent=percent,
+            message=message,
+            extra={
+                **(run.summary or {}),
+                **(extra or {}),
+            },
+        )
+        run.summary = summary
+        self.db.add(run)
+        self.db.commit()
+        self.db.refresh(run)
+
+    def _progress_summary(
+        self,
+        *,
+        stage: str,
+        percent: int,
+        message: str,
+        extra: dict | None = None,
+    ) -> dict:
+        return {
+            **(extra or {}),
+            "progress_stage": stage,
+            "progress_percent": max(0, min(int(percent), 100)),
+            "progress_message": message,
+            "last_progress_at": datetime.now(UTC).isoformat(),
+        }
 
     def _keyword_specs(self, payload: DiscoveryRunCreate) -> list[KeywordSpec]:
         specs: list[KeywordSpec] = []
@@ -488,7 +734,7 @@ class DiscoveryService:
     ) -> list[uuid.UUID]:
         if limit <= 0:
             return []
-        rows: list[tuple[uuid.UUID, float, float, datetime]] = []
+        rows: list[tuple[uuid.UUID, float, float, datetime, str, str]] = []
         clusters = list(
             self.db.scalars(
                 select(CandidateCluster).where(CandidateCluster.discovery_run_id == run.id)
@@ -506,23 +752,65 @@ class DiscoveryService:
             if product_id is None:
                 continue
             score = scores.get(product_id)
+            _group_label, group_key = _opportunity_group(cluster.label, cluster.source_query)
             rows.append(
                 (
                     product_id,
                     float(score.final_score if score else 0),
                     confidence,
                     cluster.created_at,
+                    normalize_alias(cluster.source_query) or "unknown-query",
+                    group_key,
                 )
             )
         selected: list[uuid.UUID] = []
         seen: set[uuid.UUID] = set()
-        rows.sort(key=lambda row: (row[1], row[2], row[3]), reverse=True)
-        for product_id, _score, _confidence, _created_at in rows:
-            if product_id in seen:
-                continue
-            selected.append(product_id)
-            seen.add(product_id)
-            if len(selected) >= limit:
+        selected_groups: Counter[str] = Counter()
+        max_per_query = max(1, int(self.settings.discovery_enrich_max_per_source_query))
+        max_per_group = max(1, int(self.settings.discovery_enrich_max_per_opportunity))
+        query_buckets: dict[str, list[tuple[uuid.UUID, float, float, datetime, str, str]]] = (
+            defaultdict(list)
+        )
+        for row in rows:
+            query_buckets[row[4]].append(row)
+        for bucket in query_buckets.values():
+            bucket.sort(key=lambda row: (row[1], row[2], row[3]), reverse=True)
+
+        # Round-robin across seed queries so a strong niche cannot consume the
+        # entire top-N budget. Within each query, prefer distinct opportunities.
+        query_order = sorted(
+            query_buckets,
+            key=lambda key: max((row[1], row[2]) for row in query_buckets[key]),
+            reverse=True,
+        )
+        query_counts: Counter[str] = Counter()
+        while len(selected) < limit:
+            made_progress = False
+            for query_key in query_order:
+                if query_counts[query_key] >= max_per_query:
+                    continue
+                bucket = query_buckets[query_key]
+                candidate_index = next(
+                    (
+                        index
+                        for index, row in enumerate(bucket)
+                        if row[0] not in seen and selected_groups[row[5]] < max_per_group
+                    ),
+                    None,
+                )
+                if candidate_index is None:
+                    continue
+                product_id, _score, _confidence, _created_at, _query, group_key = bucket.pop(
+                    candidate_index
+                )
+                selected.append(product_id)
+                seen.add(product_id)
+                selected_groups[group_key] += 1
+                query_counts[query_key] += 1
+                made_progress = True
+                if len(selected) >= limit:
+                    break
+            if not made_progress:
                 break
         return selected
 
@@ -531,6 +819,7 @@ class DiscoveryService:
         product_ids: list[uuid.UUID],
         *,
         refresh_pipeline_factory: Callable[[Session], AmazonRefreshPipeline] | None,
+        progress_callback: Callable[[int, int, uuid.UUID], None] | None = None,
     ) -> dict:
         if not product_ids:
             return {
@@ -548,7 +837,10 @@ class DiscoveryService:
         observations_created = 0
         errors: list[str] = []
         enriched: list[uuid.UUID] = []
-        for product_id in product_ids:
+        throttle_seconds = max(0.0, float(self.settings.discovery_enrichment_request_interval_seconds))
+        for index, product_id in enumerate(product_ids, start=1):
+            if index > 1 and refresh_pipeline_factory is None and throttle_seconds > 0:
+                time.sleep(throttle_seconds)
             response: PipelineRunResponse = refresh.run_product(product_id)
             observations_created += response.observations_created
             if response.status == "failed":
@@ -557,6 +849,8 @@ class DiscoveryService:
                 completed += 1
                 enriched.append(product_id)
             errors.extend(response.errors)
+            if progress_callback is not None:
+                progress_callback(index, len(product_ids), product_id)
         return {
             "requested": len(product_ids),
             "completed": completed,
@@ -587,6 +881,8 @@ class DiscoveryService:
             if product_id is None:
                 continue
             score = scores.get(product_id)
+            score_breakdown = score.score_breakdown if score else {}
+            data_readiness = score_breakdown.get("data_readiness") or {}
             result = DiscoveryRunResult(
                 discovery_run_id=run.id,
                 seed_keyword_id=cluster.seed_keyword_id,
@@ -599,15 +895,55 @@ class DiscoveryService:
                 metadata_={
                     "cluster_label": cluster.label,
                     "source_query": cluster.source_query,
+                    "data_readiness_state": data_readiness.get("state", "catalog_only"),
+                    "data_readiness_score_factor": data_readiness.get("score_factor", 0.35),
+                    "raw_opportunity_score": score_breakdown.get("raw_opportunity_score"),
                 },
             )
             self.db.add(result)
             result_rows.append(result)
             created += 1
         self.db.flush()
-        result_rows.sort(key=lambda row: row.opportunity_score or -1, reverse=True)
-        for index, row in enumerate(result_rows, start=1):
+        grouped: dict[str, list[DiscoveryRunResult]] = defaultdict(list)
+        for row in result_rows:
+            metadata = row.metadata_ or {}
+            group_label, group_key = _opportunity_group(
+                str(metadata.get("cluster_label") or ""),
+                str(metadata.get("source_query") or ""),
+            )
+            metadata.update(
+                {
+                    "opportunity_group_key": group_key,
+                    "opportunity_group_label": group_label,
+                }
+            )
+            row.metadata_ = metadata
+            grouped[group_key].append(row)
+
+        representatives: list[DiscoveryRunResult] = []
+        for members in grouped.values():
+            members.sort(key=lambda row: row.opportunity_score or -1, reverse=True)
+            representatives.append(members[0])
+            for group_rank, row in enumerate(members, start=1):
+                metadata = dict(row.metadata_ or {})
+                metadata.update(
+                    {
+                        "opportunity_group_rank": group_rank,
+                        "opportunity_group_member_count": len(members),
+                        "is_opportunity_representative": group_rank == 1,
+                    }
+                )
+                row.metadata_ = metadata
+                row.rank_position = None
+
+        representatives.sort(key=lambda row: row.opportunity_score or -1, reverse=True)
+        for index, row in enumerate(representatives, start=1):
             row.rank_position = index
+        run.summary = {
+            **(run.summary or {}),
+            "opportunity_groups_created": len(grouped),
+            "variants_collapsed": max(0, len(result_rows) - len(grouped)),
+        }
         self.db.commit()
         return created
 
@@ -663,6 +999,64 @@ def _label_from_tokens(tokens: list[str], *, fallback: str | None) -> str:
     return _clean(fallback or "unknown product")
 
 
+def _opportunity_group(cluster_label: str, source_query: str) -> tuple[str, str]:
+    """Roll brand/listing-level clusters into a stable product opportunity concept."""
+    label_tokens = _opportunity_tokens(cluster_label)
+    query_tokens = _opportunity_tokens(source_query)
+    label_set = set(label_tokens)
+    query_set = set(query_tokens)
+    accessory_mismatch = bool(
+        (label_set & OPPORTUNITY_ACCESSORY_TERMS) - (query_set & OPPORTUNITY_ACCESSORY_TERMS)
+    )
+
+    # Amazon commonly returns brand-prefixed variants for a focused query. Treat
+    # heated/bucket towel listings as variants of the towel-warmer opportunity.
+    towel_warmer_terms = {"bucket", "heater", "warmer"}
+    if (
+        {"towel", "warmer"}.issubset(query_set)
+        and "towel" in label_set
+        and not accessory_mismatch
+    ):
+        if label_set & towel_warmer_terms:
+            return "towel warmer", "towel-warmer"
+
+    # A short focused query is the best concept label when the listing label
+    # contains all of its meaningful terms, usually after a brand prefix.
+    query_coverage = len(query_set & label_set) / len(query_set) if query_set else 0
+    if 1 < len(query_tokens) <= 4 and query_coverage >= 0.75 and not accessory_mismatch:
+        label = " ".join(query_tokens)
+        return label, normalize_alias(label)
+
+    # Otherwise retain the catalog cluster. This prevents broad seeds such as
+    # "travel organizer" from collapsing unrelated products into one result.
+    label = " ".join(label_tokens) or _clean(cluster_label or source_query or "unknown product")
+    return label, normalize_alias(label)
+
+
+def _opportunity_tokens(value: str) -> list[str]:
+    tokens: list[str] = []
+    normalized = normalize_alias(re.sub(r"[^a-zA-Z0-9 ]+", " ", value))
+    retained_stop_words = OPPORTUNITY_ACCESSORY_TERMS | {"kit", "set"}
+    raw_tokens = [
+        token
+        for token in normalized.split()
+        if token and (token not in CONCEPT_STOP_WORDS or token in retained_stop_words)
+    ]
+    for token in raw_tokens:
+        if token in OPPORTUNITY_VARIANT_TERMS or re.fullmatch(r"\d+(?:oz|in|inch|cm|mm|qt|pk)", token):
+            continue
+        canonical = {
+            "heated": "warmer",
+            "heating": "warmer",
+            "warming": "warmer",
+            "warmers": "warmer",
+        }.get(token, token)
+        if canonical.endswith("s") and len(canonical) > 4 and not canonical.endswith("ss"):
+            canonical = canonical[:-1]
+        tokens.append(canonical)
+    return tokens
+
+
 def _cluster_confidence(cluster_key: _ClusterKey, observations: list[RawObservation]) -> float:
     if not observations:
         return 0.0
@@ -698,10 +1092,17 @@ def _status(
     results_created: int,
 ) -> str:
     if results_created == 0:
-        return "failed" if errors else "success"
+        return "failed" if errors or keyword_successes < keyword_count else "success"
     if errors or keyword_successes < keyword_count:
         return "partial_success"
     return "success"
+
+
+def _bounded_percent(*, completed: int, total: int, start: int, end: int) -> int:
+    if total <= 0:
+        return end
+    ratio = max(0.0, min(float(completed) / float(total), 1.0))
+    return int(round(start + (end - start) * ratio))
 
 
 def _enrichment_state(

@@ -101,6 +101,37 @@ def test_amazon_sp_api_client_retries_throttled_requests() -> None:
     assert payload["payload"][0]["ASIN"] == "B000TEST01"
 
 
+def test_amazon_sp_api_client_retries_transport_failures() -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        if request.url.path == "/auth/o2/token":
+            return httpx.Response(200, json={"access_token": "Atza|test-access-token"})
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectError("temporary network failure", request=request)
+        return httpx.Response(200, json={"payload": []})
+
+    settings = Settings(
+        _env_file=None,
+        amazon_sp_api_enabled=True,
+        amazon_lwa_client_id="client-id",
+        amazon_lwa_client_secret="client-secret",
+        amazon_refresh_token="refresh-token",
+        amazon_request_max_attempts=2,
+        amazon_request_backoff_seconds=0,
+        amazon_pricing_request_interval_seconds=0,
+    )
+    client = AmazonSpApiClient(
+        settings,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    assert client.get_competitive_pricing_for_asin("B000TEST01") == {"payload": []}
+    assert attempts == 2
+
+
 def test_amazon_sp_api_plugin_maps_catalog_items() -> None:
     plugin = AmazonSpApiPlugin()
     observed_at = datetime.now(UTC)

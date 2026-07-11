@@ -8,6 +8,8 @@ __pycache__/
 *.db
 *.sqlite
 
+data/
+
 backend/product_discovery.db
 backend/.coverage
 

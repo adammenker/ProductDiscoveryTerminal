@@ -59,7 +59,7 @@ def build_recommendation_v2(
         sum(component["coverage"] for component in opportunity_components.values()) / len(opportunity_components),
         1,
     )
-    opportunity_score = weighted_score(opportunity_components, opportunity_coverage)
+    raw_opportunity_score = weighted_score(opportunity_components, opportunity_coverage)
     evidence_confidence_score = data_quality["value"] or 0
     validation_readiness_score = validation_readiness(
         included_comparables=included_comparables,
@@ -69,6 +69,18 @@ def build_recommendation_v2(
         insights=insights,
         derived_signals=derived_signals,
         direct_demand_available=bool(_direct_demand_sources(market_signals)),
+    )
+    data_readiness = data_readiness_state(
+        included_comparables=included_comparables,
+        economics=economics,
+        supplier_validation=supplier_validation,
+        derived_signals=derived_signals,
+        direct_demand_available=bool(_direct_demand_sources(market_signals)),
+    )
+    opportunity_score = (
+        round(raw_opportunity_score * data_readiness["score_factor"], 2)
+        if raw_opportunity_score is not None
+        else None
     )
 
     missing_evidence = _missing_evidence(
@@ -109,6 +121,8 @@ def build_recommendation_v2(
 
     return {
         "opportunity_score": opportunity_score,
+        "raw_opportunity_score": raw_opportunity_score,
+        "data_readiness": data_readiness,
         "opportunity_coverage": opportunity_coverage,
         "evidence_confidence_score": evidence_confidence_score,
         "validation_readiness_score": validation_readiness_score,
@@ -630,6 +644,42 @@ def validation_readiness(
         "supplier_validation": 100 if supplier_validation.get("viable_quote_count") else 0,
     }
     return round(sum(READINESS_WEIGHTS[key] * value for key, value in checklist.items()), 1)
+
+
+def data_readiness_state(
+    *,
+    included_comparables: list[dict[str, Any]],
+    economics: dict[str, Any],
+    supplier_validation: dict[str, Any],
+    derived_signals: dict[str, Any],
+    direct_demand_available: bool,
+) -> dict[str, Any]:
+    checks = {
+        "comparables": bool(included_comparables),
+        "live_price": economics.get("modeled_price") is not None,
+        "live_fees": economics.get("fee_source") == "amazon_spapi_product_fees",
+        "history": any(
+            (row or {}).get("status") == "measured"
+            for row in (derived_signals.get("windows") or {}).values()
+        ),
+        "direct_demand": direct_demand_available,
+        "supplier_quote": bool(supplier_validation.get("viable_quote_count")),
+    }
+    core_count = sum(checks[key] for key in ("comparables", "live_price", "live_fees"))
+    if all(checks.values()):
+        state, factor = "validated", 1.0
+    elif core_count == 3:
+        state, factor = "amazon_enriched", 1.0
+    elif core_count:
+        state, factor = "partially_enriched", 0.65
+    else:
+        state, factor = "catalog_only", 0.35
+    return {
+        "state": state,
+        "score_factor": factor,
+        "checks": checks,
+        "missing": [name for name, available in checks.items() if not available],
+    }
 
 
 def recommendation_rule(

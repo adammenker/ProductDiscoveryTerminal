@@ -123,9 +123,14 @@ STORE_RAW_AMAZON_PAYLOADS=false
 RAW_PAYLOAD_RETENTION_DAYS=7
 DISCOVERY_ENRICH_TOP_N=20
 DISCOVERY_MIN_CLUSTER_CONFIDENCE=0.60
+DISCOVERY_ENRICHMENT_REQUEST_INTERVAL_SECONDS=2.0
+DISCOVERY_ENRICH_MAX_PER_SOURCE_QUERY=3
+DISCOVERY_ENRICH_MAX_PER_OPPORTUNITY=1
 ```
 
 The sandbox endpoint defaults to `https://sandbox.sellingpartnerapi-na.amazon.com` for North America. Production defaults to `https://sellingpartnerapi-na.amazon.com` when `AMAZON_SP_API_ENV=production` and `AMAZON_SP_API_ENDPOINT` is not explicitly set. The backend also accepts the older names `AMAZON_SP_API_ENVIRONMENT` and `AMAZON_REFRESH_TOKEN` for compatibility.
+
+SP-API calls use process-wide endpoint pacing for catalog, pricing, and fees. Throttled and transient server responses honor `Retry-After` and fall back to exponential backoff; temporary transport failures are retried as well.
 
 Run a product research refresh through the API:
 
