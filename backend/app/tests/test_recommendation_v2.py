@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -17,7 +17,7 @@ from app.models import (
     RawObservation,
     RunStatus,
 )
-from app.scoring.v2 import data_readiness_state
+from app.scoring.v2 import data_readiness_state, ranking_priority_score
 from app.services.comparable_service import ComparableService
 from app.services.scoring_service import ScoringService
 from app.services.validation_service import ValidationService
@@ -40,9 +40,20 @@ def test_data_readiness_distinguishes_partial_and_amazon_enriched_evidence() -> 
     )
 
     assert partial["state"] == "partially_enriched"
-    assert partial["score_factor"] == 0.65
     assert enriched["state"] == "amazon_enriched"
-    assert enriched["score_factor"] == 1.0
+
+
+def test_research_priority_is_separate_from_opportunity_score() -> None:
+    priority = ranking_priority_score(
+        opportunity_score=72.0,
+        evidence_confidence_score=40.0,
+        readiness_state="catalog_only",
+    )
+
+    assert priority["opportunity_score"] == 72.0
+    assert priority["score"] == 96.0
+    assert priority["uncertainty_bonus"] == 9.0
+    assert priority["stage_bonus"] == 15.0
 
 
 def test_recommendation_v2_keeps_missing_components_nullable(db_session: Session) -> None:
@@ -230,6 +241,79 @@ def test_snapshot_cohorts_are_idempotent_and_scoring_is_read_only(db_session: Se
     second = service.create_snapshot_cohort(product.id)
     assert second["snapshot_cohort_id"] != first["snapshot_cohort_id"]
     assert second["snapshots_created"] == 1
+
+
+def test_catalog_refresh_does_not_refresh_carried_forward_price(db_session: Session) -> None:
+    product = _product(db_session)
+    _amazon_observation_set(
+        db_session,
+        product,
+        asin="B000GOOD01",
+        title="Facial Ice Roller for Puffy Face",
+        product_type="facial ice roller",
+        category="beauty",
+        price=24.99,
+        fees=8.25,
+        sales_rank=1200,
+    )
+    service = ComparableService(db_session)
+    comparable = service.sync_product(product.id)[0]
+    first = service.create_snapshot_cohort(product.id)
+    first_snapshot = db_session.scalar(
+        select(MarketplaceAsinSnapshot).where(
+            MarketplaceAsinSnapshot.snapshot_cohort_id == first["snapshot_cohort_id"]
+        )
+    )
+    assert first_snapshot is not None
+    original_price_at = first_snapshot.price_observed_at
+
+    refreshed_at = datetime.now(UTC) + timedelta(days=6)
+    run = _run(db_session)
+    db_session.add(
+        RawObservation(
+            plugin_run_id=run.id,
+            product_id=product.id,
+            source="amazon_sp_api",
+            source_plugin="amazon_catalog_spapi",
+            observed_at=refreshed_at,
+            entity_type=ObservationEntityType.MARKETPLACE_LISTING,
+            external_id="B000GOOD01",
+            title="Facial Ice Roller for Puffy Face",
+            metrics={"bestseller_rank": 900},
+            metadata_={
+                "evidence_type": "amazon_catalog",
+                "asin": "B000GOOD01",
+                "title": "Facial Ice Roller for Puffy Face",
+                "product_type": "facial ice roller",
+                "category": "beauty",
+            },
+            media_urls=[],
+            content_hash="B000GOOD01-catalog-only-refresh",
+        )
+    )
+    db_session.commit()
+
+    comparable = service.sync_product(product.id)[0]
+    second = service.create_snapshot_cohort(product.id)
+    second_snapshot = db_session.scalar(
+        select(MarketplaceAsinSnapshot).where(
+            MarketplaceAsinSnapshot.snapshot_cohort_id == second["snapshot_cohort_id"]
+        )
+    )
+    assert second_snapshot is not None
+    assert comparable.catalog_observed_at is not None
+    assert comparable.rank_observed_at is not None
+    assert comparable.catalog_observed_at.replace(tzinfo=UTC) == refreshed_at
+    assert comparable.rank_observed_at.replace(tzinfo=UTC) == refreshed_at
+    assert comparable.price_observed_at == original_price_at
+    assert second_snapshot.price == 24.99
+    assert second_snapshot.price_observed_at == original_price_at
+    assert second_snapshot.catalog_observed_at is not None
+    assert second_snapshot.catalog_observed_at.replace(tzinfo=UTC) == refreshed_at
+
+    signal = service.derived_signals(product.id)["windows"]["7d"]
+    assert signal["matched_asin_change"]["price"]["absolute_change"] is None
+    assert signal["matched_asin_change"]["price"]["fresh_measurement"] is False
 
 
 def _product(db_session: Session) -> ProductCandidate:

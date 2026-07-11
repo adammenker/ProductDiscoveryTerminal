@@ -81,7 +81,7 @@ DISCOVERY_ENRICH_MAX_PER_OPPORTUNITY=1
 
 The `/discovery` UI can override the top-N and confidence values per run. Set `enrich_top_n` to `0` to run catalog-only discovery. Candidates are selected round-robin across source queries and capped per opportunity, preventing one niche or a set of listing variants from consuming the enrichment budget. `DISCOVERY_ENRICHMENT_REQUEST_INTERVAL_SECONDS` adds a pause between full Amazon refreshes, while the SP-API client separately paces catalog, pricing, and fee operations.
 
-Final results are ranked as opportunity concepts. Brand, color, size, material, and pack variants collapse beneath a representative candidate, while accessories remain separate. Every score includes `data_readiness` (`catalog_only`, `partially_enriched`, `amazon_enriched`, or `validated`) and incomplete evidence receives a visible score factor before ranking.
+Final results are ranked as opportunity concepts. Brand, color, size, material, and pack variants collapse beneath a representative candidate, while accessories remain separate. `opportunity_score` measures product attractiveness without a readiness multiplier. `evidence_confidence_score` measures trustworthiness, and `ranking_priority_score` is a separate workflow score used to choose promising, uncertain candidates for enrichment. Every score also includes `data_readiness` (`catalog_only`, `partially_enriched`, `amazon_enriched`, or `validated`).
 
 ## API
 

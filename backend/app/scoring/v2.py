@@ -77,10 +77,11 @@ def build_recommendation_v2(
         derived_signals=derived_signals,
         direct_demand_available=bool(_direct_demand_sources(market_signals)),
     )
-    opportunity_score = (
-        round(raw_opportunity_score * data_readiness["score_factor"], 2)
-        if raw_opportunity_score is not None
-        else None
+    opportunity_score = raw_opportunity_score
+    ranking_priority = ranking_priority_score(
+        opportunity_score=opportunity_score,
+        evidence_confidence_score=evidence_confidence_score,
+        readiness_state=str(data_readiness["state"]),
     )
 
     missing_evidence = _missing_evidence(
@@ -122,6 +123,8 @@ def build_recommendation_v2(
     return {
         "opportunity_score": opportunity_score,
         "raw_opportunity_score": raw_opportunity_score,
+        "ranking_priority_score": ranking_priority["score"],
+        "ranking_priority": ranking_priority,
         "data_readiness": data_readiness,
         "opportunity_coverage": opportunity_coverage,
         "evidence_confidence_score": evidence_confidence_score,
@@ -667,18 +670,46 @@ def data_readiness_state(
     }
     core_count = sum(checks[key] for key in ("comparables", "live_price", "live_fees"))
     if all(checks.values()):
-        state, factor = "validated", 1.0
+        state = "validated"
     elif core_count == 3:
-        state, factor = "amazon_enriched", 1.0
+        state = "amazon_enriched"
     elif core_count:
-        state, factor = "partially_enriched", 0.65
+        state = "partially_enriched"
     else:
-        state, factor = "catalog_only", 0.35
+        state = "catalog_only"
     return {
         "state": state,
-        "score_factor": factor,
         "checks": checks,
         "missing": [name for name, available in checks.items() if not available],
+    }
+
+
+def ranking_priority_score(
+    *,
+    opportunity_score: float | None,
+    evidence_confidence_score: float,
+    readiness_state: str,
+) -> dict[str, Any]:
+    """Prioritize promising, uncertain candidates for the next research action."""
+    if opportunity_score is None:
+        return {
+            "score": None,
+            "opportunity_score": None,
+            "uncertainty_bonus": 0.0,
+            "stage_bonus": 0.0,
+        }
+    uncertainty_bonus = round((100 - clamp(evidence_confidence_score)) * 0.15, 2)
+    stage_bonus = {
+        "catalog_only": 15.0,
+        "partially_enriched": 10.0,
+        "amazon_enriched": 3.0,
+        "validated": 0.0,
+    }.get(readiness_state, 5.0)
+    return {
+        "score": round(clamp(opportunity_score + uncertainty_bonus + stage_bonus), 2),
+        "opportunity_score": opportunity_score,
+        "uncertainty_bonus": uncertainty_bonus,
+        "stage_bonus": stage_bonus,
     }
 
 

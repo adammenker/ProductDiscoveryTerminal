@@ -451,12 +451,14 @@ function RunDetailPanel({ run }: { run?: DiscoveryRun }) {
         <PanelTitle icon={CheckCircle2} title="Ranked opportunities" />
         {opportunityGroups.length ? (
           <div className="mt-4 overflow-x-auto border border-terminal-line bg-terminal-bg">
-            <table className="w-full min-w-[760px] text-left text-sm">
+            <table className="w-full min-w-[920px] text-left text-sm">
               <thead className="bg-terminal-panel font-mono text-xs uppercase text-terminal-muted">
                 <tr>
                   <th className="border-b border-terminal-line px-3 py-2 font-medium">Rank</th>
                   <th className="border-b border-terminal-line px-3 py-2 font-medium">Opportunity</th>
-                  <th className="border-b border-terminal-line px-3 py-2 font-medium">Score</th>
+                  <th className="border-b border-terminal-line px-3 py-2 font-medium">Opportunity Score</th>
+                  <th className="border-b border-terminal-line px-3 py-2 font-medium">Confidence</th>
+                  <th className="border-b border-terminal-line px-3 py-2 font-medium">Research Priority</th>
                   <th className="border-b border-terminal-line px-3 py-2 font-medium">Recommendation</th>
                   <th className="border-b border-terminal-line px-3 py-2 font-medium">Status</th>
                   <th className="border-b border-terminal-line px-3 py-2 font-medium" aria-label="Open" />
@@ -491,6 +493,8 @@ function OpportunityRows({ label, representative, members }: {
           <div className="font-mono text-[11px] text-terminal-muted">{members.length} {members.length === 1 ? "listing" : "variants"}</div>
         </td>
         <td className="px-3 py-2 font-mono text-xs tabular-nums">{formatScore(representative.opportunity_score)}</td>
+        <td className="px-3 py-2 font-mono text-xs tabular-nums">{formatScore(representative.evidence_confidence_score)}</td>
+        <td className="px-3 py-2 font-mono text-xs tabular-nums">{formatScore(representative.ranking_priority_score)}</td>
         <td className="px-3 py-2"><RecommendationBadge value={representative.recommendation} /></td>
         <td className="px-3 py-2 font-mono text-xs uppercase text-terminal-muted">{titleCase(representative.status)}</td>
         <td className="px-3 py-2">
@@ -502,14 +506,16 @@ function OpportunityRows({ label, representative, members }: {
       {members.length > 1 ? (
         <tr className="border-b border-terminal-line/70">
           <td />
-          <td colSpan={5} className="px-3 py-2">
+          <td colSpan={7} className="px-3 py-2">
             <details>
               <summary className="cursor-pointer font-mono text-[11px] uppercase text-terminal-muted hover:text-terminal-green">View {members.length} product variants</summary>
               <div className="mt-2 grid gap-1">
                 {members.map((member) => (
                   <Link key={member.id} href={`/products/${member.product_id}`} className="flex items-center justify-between gap-3 border border-terminal-line px-2 py-1.5 text-xs hover:border-terminal-green hover:text-terminal-green">
                     <span>{titleCase(member.product_name)}</span>
-                    <span className="font-mono tabular-nums">{formatScore(member.opportunity_score)}</span>
+                    <span className="font-mono tabular-nums">
+                      score {formatScore(member.opportunity_score)} / priority {formatScore(member.ranking_priority_score)}
+                    </span>
                   </Link>
                 ))}
               </div>

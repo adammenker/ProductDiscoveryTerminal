@@ -23,6 +23,14 @@ AMAZON_COMPARABLE_PLUGINS = {
 }
 INCLUDED_RELEVANCE_STATUSES = {"included", "manually_included"}
 COMPARABLE_RELEVANCE_VERSION = "comparable_relevance_v1"
+PROVENANCE_FIELDS = (
+    "catalog_observed_at",
+    "price_observed_at",
+    "offer_count_observed_at",
+    "rank_observed_at",
+    "fee_observed_at",
+    "review_observed_at",
+)
 STOPWORDS = {
     "a",
     "an",
@@ -337,6 +345,13 @@ class ComparableService:
             "snapshot_count": len(snapshots),
             "asin_count": len({row.asin for row in snapshots}),
             "latest_observation_at": snapshots[-1].observed_at if snapshots else None,
+            "latest_metric_observation_at": {
+                field: max(
+                    (getattr(row, field) for row in snapshots if getattr(row, field) is not None),
+                    default=None,
+                )
+                for field in PROVENANCE_FIELDS
+            },
         }
 
     def comparable_summary(self, product_id: uuid.UUID | str) -> dict[str, Any]:
@@ -383,6 +398,12 @@ class ComparableService:
             "discovered_from_query": comparable.discovered_from_query,
             "discovered_at": comparable.discovered_at,
             "last_refreshed_at": comparable.last_refreshed_at,
+            "catalog_observed_at": comparable.catalog_observed_at,
+            "price_observed_at": comparable.price_observed_at,
+            "offer_count_observed_at": comparable.offer_count_observed_at,
+            "rank_observed_at": comparable.rank_observed_at,
+            "fee_observed_at": comparable.fee_observed_at,
+            "review_observed_at": comparable.review_observed_at,
             "metadata": comparable.metadata_,
             "selected_proxy": comparable.asin == selected_asin,
             "url": f"https://www.amazon.com/dp/{comparable.asin}",
@@ -431,6 +452,7 @@ class ComparableService:
 
             metrics = observation.metrics or {}
             if evidence_type == "amazon_catalog" or observation.source_plugin == "amazon_catalog_spapi":
+                row["catalog_observed_at"] = observation.observed_at
                 row["title"] = metadata.get("title") or observation.title or row.get("title")
                 row["brand"] = metadata.get("brand") or row.get("brand")
                 row["product_type"] = metadata.get("amazon_product_type") or metadata.get("product_type") or row.get("product_type")
@@ -450,7 +472,19 @@ class ComparableService:
                 row["rank_category"] = metadata.get("rank_category") or row.get("rank_category")
                 row["browse_node"] = metadata.get("browse_node") or row.get("browse_node")
                 row["rank_classification"] = metadata.get("rank_classification") or row.get("rank_classification")
+                if _first_number(
+                    metrics.get("bestseller_rank"),
+                    metrics.get("sales_rank"),
+                    metadata.get("sales_rank"),
+                ) is not None:
+                    row["rank_observed_at"] = observation.observed_at
             if evidence_type == "amazon_pricing" or observation.source_plugin == "amazon_pricing_spapi":
+                supplied_price = _first_number(
+                    metrics.get("featured_offer_price"),
+                    metrics.get("competitive_price"),
+                    metrics.get("lowest_offer_price"),
+                    metrics.get("price"),
+                )
                 row["price"] = _first_number(
                     metrics.get("featured_offer_price"),
                     metrics.get("competitive_price"),
@@ -463,13 +497,25 @@ class ComparableService:
                 row["offer_count"] = _first_number(metrics.get("offer_count"), row.get("offer_count"))
                 row["seller_count"] = _first_number(metrics.get("seller_count"), row.get("seller_count"))
                 row["currency"] = metadata.get("currency") or row.get("currency") or "USD"
+                if supplied_price is not None:
+                    row["price_observed_at"] = observation.observed_at
+                if _first_number(metrics.get("offer_count"), metrics.get("seller_count")) is not None:
+                    row["offer_count_observed_at"] = observation.observed_at
             if evidence_type == "amazon_fees" or observation.source_plugin == "amazon_fees_spapi":
                 row["fee_estimate"] = _first_number(metrics.get("total_amazon_fees"), row.get("fee_estimate"))
                 row["fulfillment_fee"] = _first_number(metrics.get("fulfillment_fee_per_unit"), row.get("fulfillment_fee"))
                 row["referral_fee"] = _first_number(metrics.get("referral_fee_per_unit"), row.get("referral_fee"))
                 row["currency"] = metadata.get("currency") or row.get("currency") or "USD"
+                if _first_number(
+                    metrics.get("total_amazon_fees"),
+                    metrics.get("fulfillment_fee_per_unit"),
+                    metrics.get("referral_fee_per_unit"),
+                ) is not None:
+                    row["fee_observed_at"] = observation.observed_at
             row["review_count"] = _first_number(metrics.get("review_count"), row.get("review_count"))
             row["rating"] = _first_number(metrics.get("rating"), row.get("rating"))
+            if _first_number(metrics.get("review_count"), metrics.get("rating")) is not None:
+                row["review_observed_at"] = observation.observed_at
         return rows
 
     def _apply_observation_fields(self, comparable: ComparableAsin, row: dict[str, Any]) -> None:
@@ -484,6 +530,10 @@ class ComparableService:
         comparable.currency = row.get("currency") or comparable.currency or "USD"
         comparable.dimensions = row.get("dimensions") or comparable.dimensions
         comparable.discovered_from_query = row.get("discovered_from_query") or comparable.discovered_from_query
+        for field in PROVENANCE_FIELDS:
+            observed_at = row.get(field)
+            if observed_at is not None:
+                setattr(comparable, field, observed_at)
 
     def _relevance(
         self,
@@ -616,6 +666,7 @@ def _observation_fingerprint(row: dict[str, Any]) -> str:
         "review_count": row.get("review_count"),
         "rating": row.get("rating"),
         "fee_estimate": row.get("fee_estimate"),
+        **{field: row.get(field) for field in PROVENANCE_FIELDS},
     }
     encoded = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -637,6 +688,12 @@ def _snapshot_from_row(
         observation_fingerprint=observation_fingerprint,
         asin=asin,
         observed_at=row.get("last_observed_at") or datetime.now(UTC),
+        catalog_observed_at=row.get("catalog_observed_at"),
+        price_observed_at=row.get("price_observed_at"),
+        offer_count_observed_at=row.get("offer_count_observed_at"),
+        rank_observed_at=row.get("rank_observed_at"),
+        fee_observed_at=row.get("fee_observed_at"),
+        review_observed_at=row.get("review_observed_at"),
         price=row.get("price"),
         featured_offer_price=row.get("featured_offer_price"),
         lowest_offer_price=row.get("lowest_offer_price"),
@@ -671,6 +728,12 @@ def _snapshot_dict(snapshot: MarketplaceAsinSnapshot) -> dict[str, Any]:
         "observation_fingerprint": snapshot.observation_fingerprint,
         "asin": snapshot.asin,
         "observed_at": snapshot.observed_at,
+        "catalog_observed_at": snapshot.catalog_observed_at,
+        "price_observed_at": snapshot.price_observed_at,
+        "offer_count_observed_at": snapshot.offer_count_observed_at,
+        "rank_observed_at": snapshot.rank_observed_at,
+        "fee_observed_at": snapshot.fee_observed_at,
+        "review_observed_at": snapshot.review_observed_at,
         "price": snapshot.price,
         "featured_offer_price": snapshot.featured_offer_price,
         "lowest_offer_price": snapshot.lowest_offer_price,
@@ -779,6 +842,12 @@ def _cohort_aggregate(rows: list[MarketplaceAsinSnapshot]) -> dict[str, Any]:
         "median_seller_count": _median_attr(rows, "seller_count"),
         "included_comparable_count": len(rows),
         "coverage_percent": min(100, len(rows) * 20),
+        "price_observed_at": _latest_metric_at(rows, "price"),
+        "featured_offer_observed_at": _latest_metric_at(rows, "featured_offer_price"),
+        "bestseller_rank_observed_at": _latest_metric_at(rows, "bestseller_rank"),
+        "review_count_observed_at": _latest_metric_at(rows, "review_count"),
+        "offer_count_observed_at": _latest_metric_at(rows, "offer_count"),
+        "seller_count_observed_at": _latest_metric_at(rows, "seller_count"),
     }
 
 
@@ -787,18 +856,27 @@ def _median_attr(rows: list[MarketplaceAsinSnapshot], field: str) -> float | Non
     return round(float(median(values)), 2) if values else None
 
 
+def _latest_metric_at(rows: list[MarketplaceAsinSnapshot], field: str) -> datetime | None:
+    return max((_metric_observed_at(row, field) for row in rows), default=None)
+
+
 def _cohort_changes(start: dict[str, Any], end: dict[str, Any]) -> dict[str, Any]:
     fields = {
-        "price": "median_price",
-        "featured_offer": "median_featured_offer",
-        "bestseller_rank": "median_bsr",
-        "review_count": "median_review_count",
-        "offer_count": "median_offer_count",
-        "seller_count": "median_seller_count",
+        "price": ("median_price", "price_observed_at"),
+        "featured_offer": ("median_featured_offer", "featured_offer_observed_at"),
+        "bestseller_rank": ("median_bsr", "bestseller_rank_observed_at"),
+        "review_count": ("median_review_count", "review_count_observed_at"),
+        "offer_count": ("median_offer_count", "offer_count_observed_at"),
+        "seller_count": ("median_seller_count", "seller_count_observed_at"),
     }
     return {
-        name: _change(start["aggregate"].get(field), end["aggregate"].get(field))
-        for name, field in fields.items()
+        name: _change_if_fresh(
+            start["aggregate"].get(value_field),
+            end["aggregate"].get(value_field),
+            start["aggregate"].get(observed_field),
+            end["aggregate"].get(observed_field),
+        )
+        for name, (value_field, observed_field) in fields.items()
     }
 
 
@@ -817,7 +895,12 @@ def _matched_changes(start: dict[str, Any], end: dict[str, Any]) -> dict[str, An
     }
     for field in ("price", "featured_offer_price", "bestseller_rank", "review_count", "offer_count", "seller_count"):
         changes = [
-            _change(getattr(start_by_asin[asin], field), getattr(end_by_asin[asin], field))
+            _change_if_fresh(
+                getattr(start_by_asin[asin], field),
+                getattr(end_by_asin[asin], field),
+                _metric_observed_at(start_by_asin[asin], field),
+                _metric_observed_at(end_by_asin[asin], field),
+            )
             for asin in matched_asins
             if getattr(start_by_asin[asin], field) is not None and getattr(end_by_asin[asin], field) is not None
         ]
@@ -837,9 +920,54 @@ def _change(start_value: Any, end_value: Any) -> dict[str, float | None]:
     return {"start": round(start_float, 2), "end": round(end_float, 2), "absolute_change": absolute, "percent_change": percent}
 
 
+def _change_if_fresh(
+    start_value: Any,
+    end_value: Any,
+    start_observed_at: datetime | None,
+    end_observed_at: datetime | None,
+) -> dict[str, Any]:
+    if (
+        start_observed_at is None
+        or end_observed_at is None
+        or end_observed_at <= start_observed_at
+    ):
+        return {
+            "start": start_value,
+            "end": end_value,
+            "absolute_change": None,
+            "percent_change": None,
+            "start_observed_at": start_observed_at,
+            "end_observed_at": end_observed_at,
+            "fresh_measurement": False,
+        }
+    return {
+        **_change(start_value, end_value),
+        "start_observed_at": start_observed_at,
+        "end_observed_at": end_observed_at,
+        "fresh_measurement": True,
+    }
+
+
+def _metric_observed_at(snapshot: MarketplaceAsinSnapshot, field: str) -> datetime:
+    provenance_field = {
+        "price": "price_observed_at",
+        "featured_offer_price": "price_observed_at",
+        "lowest_offer_price": "price_observed_at",
+        "offer_count": "offer_count_observed_at",
+        "seller_count": "offer_count_observed_at",
+        "bestseller_rank": "rank_observed_at",
+        "review_count": "review_observed_at",
+        "rating": "review_observed_at",
+        "fee_estimate": "fee_observed_at",
+        "fulfillment_fee": "fee_observed_at",
+        "referral_fee": "fee_observed_at",
+    }[field]
+    return getattr(snapshot, provenance_field) or snapshot.observed_at
+
+
 def _median_change(changes: list[dict[str, float | None]]) -> dict[str, float | None]:
     if not changes:
-        return {"absolute_change": None, "percent_change": None}
+        return {"absolute_change": None, "percent_change": None, "fresh_measurement": False}
     absolute: list[float] = []
     percent: list[float] = []
     for change in changes:
@@ -852,6 +980,7 @@ def _median_change(changes: list[dict[str, float | None]]) -> dict[str, float | 
     return {
         "absolute_change": round(float(median(absolute)), 2) if absolute else None,
         "percent_change": round(float(median(percent)), 2) if percent else None,
+        "fresh_measurement": bool(absolute or percent),
     }
 
 

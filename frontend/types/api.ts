@@ -665,6 +665,8 @@ export type DiscoveryRunResult = {
   status: string;
   rank_position: number | null;
   opportunity_score: number | null;
+  evidence_confidence_score: number | null;
+  ranking_priority_score: number | null;
   recommendation: string | null;
   metadata: Record<string, unknown>;
 };

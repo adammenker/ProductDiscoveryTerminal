@@ -752,11 +752,17 @@ class DiscoveryService:
             if product_id is None:
                 continue
             score = scores.get(product_id)
+            score_breakdown = score.score_breakdown if score else {}
+            research_priority = score_breakdown.get("ranking_priority_score")
             _group_label, group_key = _opportunity_group(cluster.label, cluster.source_query)
             rows.append(
                 (
                     product_id,
-                    float(score.final_score if score else 0),
+                    float(
+                        research_priority
+                        if research_priority is not None
+                        else score.final_score if score else 0
+                    ),
                     confidence,
                     cluster.created_at,
                     normalize_alias(cluster.source_query) or "unknown-query",
@@ -891,13 +897,23 @@ class DiscoveryService:
                 score_snapshot_id=score.id if score else None,
                 status="created",
                 opportunity_score=score.final_score if score else None,
+                evidence_confidence_score=(
+                    float(score_breakdown.get("evidence_confidence_score") or 0)
+                    if score
+                    else None
+                ),
+                ranking_priority_score=(
+                    float(score_breakdown["ranking_priority_score"])
+                    if score and score_breakdown.get("ranking_priority_score") is not None
+                    else None
+                ),
                 recommendation=score.recommendation.value if score else None,
                 metadata_={
                     "cluster_label": cluster.label,
                     "source_query": cluster.source_query,
                     "data_readiness_state": data_readiness.get("state", "catalog_only"),
-                    "data_readiness_score_factor": data_readiness.get("score_factor", 0.35),
                     "raw_opportunity_score": score_breakdown.get("raw_opportunity_score"),
+                    "ranking_priority": score_breakdown.get("ranking_priority") or {},
                 },
             )
             self.db.add(result)

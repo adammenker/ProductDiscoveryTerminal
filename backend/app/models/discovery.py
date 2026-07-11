@@ -169,6 +169,8 @@ class DiscoveryRunResult(CreatedAtMixin, Base):
     status: Mapped[str] = mapped_column(String(32), default="created", nullable=False, index=True)
     rank_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
     opportunity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evidence_confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ranking_priority_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     recommendation: Mapped[str | None] = mapped_column(String(48), nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", json_type(), default=dict, nullable=False)
 

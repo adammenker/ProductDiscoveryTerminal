@@ -72,6 +72,8 @@ class DiscoveryRunResultResponse(BaseModel):
     status: str
     rank_position: int | None = None
     opportunity_score: float | None = None
+    evidence_confidence_score: float | None = None
+    ranking_priority_score: float | None = None
     recommendation: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 

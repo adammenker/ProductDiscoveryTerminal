@@ -6,6 +6,7 @@ Recommendation V2 is the decision layer for product research. It is designed to 
 opportunity_score          how attractive the product looks
 evidence_confidence_score  how much the system trusts the evidence
 validation_readiness_score how close the product is to being decision-ready
+ranking_priority_score which promising, uncertain product should be researched next
 ```
 
 ## Opportunity Components
@@ -35,6 +36,8 @@ internal consistency
 ```
 
 Supplier data is useful for validation, but it is not required for discovery-stage confidence. Missing supplier quotes lower readiness, not the intrinsic opportunity score.
+
+Readiness never multiplies `opportunity_score`. Research workflow ordering uses a separate `ranking_priority_score`, composed from intrinsic opportunity, an uncertainty bonus, and an early-stage research bonus. The discovery UI labels this value **Research Priority**.
 
 ## Validation Readiness
 

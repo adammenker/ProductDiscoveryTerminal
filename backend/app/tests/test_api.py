@@ -99,9 +99,10 @@ def test_ingestion_products_opportunities_and_detail(client: TestClient) -> None
 
     detail = client.get(f"/products/{top['id']}").json()
     assert detail["product"]["canonical_name"] == "facial ice roller"
-    assert detail["latest_score"]["final_score"] < 60
+    assert detail["latest_score"]["final_score"] > 60
     breakdown = detail["latest_score"]["score_breakdown"]
-    assert breakdown["raw_opportunity_score"] > 60
+    assert breakdown["opportunity_score"] == breakdown["raw_opportunity_score"]
+    assert breakdown["ranking_priority_score"] is not None
     assert breakdown["data_readiness"]["state"] == "partially_enriched"
     assert detail["recent_observations"]
     cost_ceiling = detail["cost_models"][0]["assumptions"]["cost_ceiling"]

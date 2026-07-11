@@ -145,6 +145,8 @@ def _result_response(
         status=result.status,
         rank_position=result.rank_position,
         opportunity_score=result.opportunity_score,
+        evidence_confidence_score=result.evidence_confidence_score,
+        ranking_priority_score=result.ranking_priority_score,
         recommendation=result.recommendation,
         metadata=result.metadata_,
     )
