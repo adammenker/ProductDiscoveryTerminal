@@ -8,6 +8,7 @@ import {
   ListChecks,
   PackageSearch,
   PlugZap,
+  Radar,
   TerminalSquare
 } from "lucide-react";
 import Link from "next/link";
@@ -15,6 +16,7 @@ import { usePathname } from "next/navigation";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: Gauge },
+  { href: "/discovery", label: "Discovery", icon: Radar },
   { href: "/validator", label: "Validator", icon: ListChecks },
   { href: "/products", label: "Products", icon: PackageSearch },
   { href: "/backtests", label: "Backtests", icon: ChartNoAxesCombined },

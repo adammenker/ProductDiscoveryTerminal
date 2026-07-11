@@ -95,6 +95,15 @@ class DiscoveryService:
     def list_seed_lists(self) -> list[SeedList]:
         return list(self.db.scalars(select(SeedList).order_by(SeedList.created_at.desc())))
 
+    def list_runs(self, limit: int = 25) -> list[DiscoveryRun]:
+        return list(
+            self.db.scalars(
+                select(DiscoveryRun)
+                .order_by(DiscoveryRun.started_at.desc())
+                .limit(max(1, min(limit, 100)))
+            )
+        )
+
     def get_seed_list(self, seed_list_id: uuid.UUID | str) -> SeedList | None:
         return self.db.get(SeedList, uuid.UUID(str(seed_list_id)))
 
@@ -129,6 +138,8 @@ class DiscoveryService:
         observations_created = 0
         clusters_created = 0
         origins_created = 0
+        candidates_created = 0
+        candidates_matched = 0
         keyword_successes = 0
 
         ingestion_runner = IngestionRunner(self.db)
@@ -178,6 +189,10 @@ class DiscoveryService:
                     self.db.add(cluster)
                     self.db.flush()
                     clusters_created += 1
+                    if created:
+                        candidates_created += 1
+                    else:
+                        candidates_matched += 1
                     product_ids.add(product.id)
                     keyword_had_result = True
                     for observation in cluster_observations:
@@ -202,13 +217,18 @@ class DiscoveryService:
         run.summary = {
             "keywords_requested": len(keywords),
             "keywords_succeeded": keyword_successes,
+            "keywords_failed": len(keywords) - keyword_successes,
             "plugins_requested": plugin_names,
             "plugins_run": [plugin.name for plugin in plugins],
             "observations_created": observations_created,
             "clusters_created": clusters_created,
             "origins_created": origins_created,
+            "candidates_created": candidates_created,
+            "candidates_matched": candidates_matched,
+            "rejected_results": 0,
             "products_matched_or_created": len(product_ids),
             "results_created": results_created,
+            "enrichment_state": _enrichment_state(scores),
             "errors": errors,
         }
         self.db.commit()
@@ -518,3 +538,13 @@ def _status(
     if errors or keyword_successes < keyword_count:
         return "partial_success"
     return "success"
+
+
+def _enrichment_state(scores: dict[uuid.UUID, OpportunityScore | None]) -> str:
+    if not scores:
+        return "no_candidates"
+    if all(score is not None for score in scores.values()):
+        return "scored"
+    if any(score is not None for score in scores.values()):
+        return "partially_scored"
+    return "pending_scoring"

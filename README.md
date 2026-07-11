@@ -23,7 +23,7 @@ Services:
 - Health: <http://localhost:8000/health>
 - Postgres: `localhost:5432`
 
-Open the frontend, type a product keyword in the search bar, and fetch real Amazon evidence through the SP-API research flow. Mock/sample plugins are still available for explicit development runs, but the default product research UI does not seed demo data.
+Open the frontend, type a product keyword in the dashboard search bar, and fetch real Amazon evidence through the SP-API research flow. Use `/discovery` for seed-list based scanner runs that can turn broad keywords into multiple candidate concepts. Mock/sample plugins are still available for explicit development runs, but the default product research UI does not seed demo data.
 
 ## Environment
 
@@ -170,7 +170,10 @@ POST /products/{id}/snapshots
 POST /paper-trades/{id}/outcomes
 GET  /backtests/summary
 POST /discovery/seed-lists
+GET  /discovery/seed-lists
 POST /discovery/runs
+GET  /discovery/runs
+GET  /discovery/runs/{id}
 ```
 
 Product Opportunity Explorer remains manual-only. Run

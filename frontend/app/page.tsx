@@ -3,12 +3,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ExternalLink, Loader2, RefreshCw, Search } from "lucide-react";
 import Link from "next/link";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useMemo, useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
 import { PluginRunTable } from "@/components/PluginRunTable";
+import { SortableHeader } from "@/components/SortableHeader";
 import { DecisionBadge } from "@/components/validation/ValidationCard";
 import { api } from "@/lib/api";
 import { formatScore, titleCase } from "@/lib/format";
+import { nextProductSort, sortProducts, type ProductSortKey, type ProductSortState } from "@/lib/product-sort";
 import type { ProductListItem, ProductResearchResponse } from "@/types/api";
 
 export default function DashboardPage() {
@@ -232,6 +234,10 @@ function ProductTable({
   isLoading: boolean;
   activeProductId?: string;
 }) {
+  const [sort, setSort] = useState<ProductSortState>(null);
+  const sortedProducts = useMemo(() => sortProducts(products, sort), [products, sort]);
+  const onSort = (key: ProductSortKey) => setSort((current) => nextProductSort(current, key));
+
   if (isLoading) {
     return <EmptyState label="Loading products" />;
   }
@@ -245,16 +251,16 @@ function ProductTable({
       <table className="w-full min-w-[760px] border-collapse text-left text-sm">
         <thead className="bg-terminal-panel text-xs uppercase text-terminal-muted">
           <tr>
-            <th className="border-b border-terminal-line px-3 py-2 font-mono font-medium">Product</th>
-            <th className="border-b border-terminal-line px-3 py-2 font-mono font-medium">Score</th>
-            <th className="border-b border-terminal-line px-3 py-2 font-mono font-medium">Decision</th>
-            <th className="border-b border-terminal-line px-3 py-2 font-mono font-medium">Economics</th>
-            <th className="border-b border-terminal-line px-3 py-2 font-mono font-medium">Evidence</th>
+            <SortableHeader label="Product" sortKey="product" sort={sort} onSort={onSort} />
+            <SortableHeader label="Score" sortKey="score" sort={sort} onSort={onSort} />
+            <SortableHeader label="Decision" sortKey="decision" sort={sort} onSort={onSort} />
+            <SortableHeader label="Economics" sortKey="economics" sort={sort} onSort={onSort} />
+            <SortableHeader label="Evidence" sortKey="evidence" sort={sort} onSort={onSort} />
             <th className="border-b border-terminal-line px-3 py-2 font-mono font-medium" aria-label="Open" />
           </tr>
         </thead>
         <tbody>
-          {products.map((product) => (
+          {sortedProducts.map((product) => (
             <tr
               key={product.id}
               className={

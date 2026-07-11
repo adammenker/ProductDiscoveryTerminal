@@ -599,6 +599,103 @@ export type ProductResearchResponse = {
   pipeline: PipelineRunResponse;
 };
 
+export type SeedKeywordInput = {
+  keyword: string;
+  category?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+export type SeedListInput = {
+  name: string;
+  description?: string | null;
+  keywords: SeedKeywordInput[];
+  metadata?: Record<string, unknown>;
+};
+
+export type SeedKeyword = {
+  id: string;
+  seed_list_id: string;
+  keyword: string;
+  category: string | null;
+  status: string;
+  metadata: Record<string, unknown>;
+};
+
+export type SeedList = {
+  id: string;
+  name: string;
+  description: string | null;
+  keywords: SeedKeyword[];
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DiscoveryKeywordInput = {
+  keyword: string;
+  category?: string | null;
+};
+
+export type DiscoveryRunInput = {
+  seed_list_id?: string | null;
+  keywords?: DiscoveryKeywordInput[];
+  plugins?: string[] | null;
+  limit_per_keyword?: number;
+};
+
+export type CandidateCluster = {
+  id: string;
+  seed_keyword_id: string | null;
+  label: string;
+  normalized_key: string;
+  source_query: string;
+  representative_title: string | null;
+  evidence_observation_ids: string[];
+  metadata: Record<string, unknown>;
+};
+
+export type DiscoveryRunResult = {
+  id: string;
+  seed_keyword_id: string | null;
+  candidate_cluster_id: string;
+  product_id: string;
+  product_name: string;
+  status: string;
+  rank_position: number | null;
+  opportunity_score: number | null;
+  recommendation: string | null;
+  metadata: Record<string, unknown>;
+};
+
+export type CandidateOrigin = {
+  id: string;
+  product_id: string;
+  discovery_run_id: string;
+  seed_keyword_id: string | null;
+  candidate_cluster_id: string | null;
+  source_plugin: string;
+  source_query: string;
+  source_observation_id: string | null;
+  source_external_id: string | null;
+  title: string | null;
+  metadata: Record<string, unknown>;
+};
+
+export type DiscoveryRun = {
+  id: string;
+  seed_list_id: string | null;
+  status: string;
+  source_plugins: string[];
+  parameters: Record<string, unknown>;
+  summary: Record<string, unknown>;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string | null;
+  clusters: CandidateCluster[];
+  results: DiscoveryRunResult[];
+  origins: CandidateOrigin[];
+};
+
 export type ProductFilters = {
   q?: string;
   category?: string;

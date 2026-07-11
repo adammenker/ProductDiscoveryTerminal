@@ -61,6 +61,9 @@ def test_broad_discovery_query_creates_multiple_clusters_and_origins(db_session)
     assert first.status == "success"
     assert first.summary["clusters_created"] == 4
     assert first.summary["products_matched_or_created"] == 4
+    assert first.summary["candidates_created"] == 4
+    assert first.summary["candidates_matched"] == 0
+    assert first.summary["enrichment_state"] == "scored"
     assert {cluster.label for cluster in first.clusters} == {
         "travel cable organizer",
         "hanging toiletry bag",
@@ -75,8 +78,11 @@ def test_broad_discovery_query_creates_multiple_clusters_and_origins(db_session)
     assert second.status == "success"
     assert second.summary["clusters_created"] == 4
     assert second.summary["origins_created"] == 5
+    assert second.summary["candidates_created"] == 0
+    assert second.summary["candidates_matched"] == 4
     assert db_session.scalar(select(func.count()).select_from(ProductCandidate)) == 4
     assert db_session.scalar(select(func.count()).select_from(CandidateOrigin)) == 10
+    assert [row.id for row in service.list_runs(limit=2)] == [second.id, first.id]
 
 
 def test_failed_discovery_keyword_does_not_fail_entire_run(db_session) -> None:  # type: ignore[no-untyped-def]
@@ -94,5 +100,6 @@ def test_failed_discovery_keyword_does_not_fail_entire_run(db_session) -> None: 
     assert run.status == "partial_success"
     assert run.summary["keywords_requested"] == 2
     assert run.summary["keywords_succeeded"] == 1
+    assert run.summary["keywords_failed"] == 1
     assert run.summary["results_created"] == 4
     assert any("broken keyword" in error for error in run.summary["errors"])

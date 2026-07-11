@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -54,6 +54,14 @@ def create_discovery_run(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _run_response(db, run)
+
+
+@router.get("/runs", response_model=list[DiscoveryRunResponse])
+def list_discovery_runs(
+    limit: int = Query(25, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> list[DiscoveryRunResponse]:
+    return [_run_response(db, run) for run in DiscoveryService(db).list_runs(limit=limit)]
 
 
 @router.get("/runs/{run_id}", response_model=DiscoveryRunResponse)

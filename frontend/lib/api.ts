@@ -1,6 +1,8 @@
 import type {
   BacktestSummary,
   ConstraintEvaluation,
+  DiscoveryRun,
+  DiscoveryRunInput,
   OutcomeCreateResponse,
   OutcomeInput,
   PaperTrade,
@@ -18,6 +20,8 @@ import type {
   ProductResearchInput,
   ProductResearchResponse,
   RecommendationFeedbackInput,
+  SeedList,
+  SeedListInput,
   ProductValidation,
   SnapshotInput,
   SnapshotResponse,
@@ -110,5 +114,12 @@ export const api = {
   researchProduct: (input: ProductResearchInput) =>
     post<ProductResearchResponse>("/ingestion/research", input),
   refreshExistingProducts: (limit = 10) =>
-    post<PipelineRunResponse>(`/ingestion/refresh-existing?limit=${limit}`, {})
+    post<PipelineRunResponse>(`/ingestion/refresh-existing?limit=${limit}`, {}),
+  seedLists: () => fetchJson<SeedList[]>("/discovery/seed-lists"),
+  createSeedList: (input: SeedListInput) =>
+    post<SeedList>("/discovery/seed-lists", input),
+  discoveryRuns: (limit = 25) => fetchJson<DiscoveryRun[]>(`/discovery/runs?limit=${limit}`),
+  discoveryRun: (id: string) => fetchJson<DiscoveryRun>(`/discovery/runs/${id}`),
+  createDiscoveryRun: (input: DiscoveryRunInput) =>
+    post<DiscoveryRun>("/discovery/runs", input)
 };
