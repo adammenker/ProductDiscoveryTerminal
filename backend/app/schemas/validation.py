@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -43,9 +44,9 @@ class SupplierQuoteUpdate(BaseModel):
     lead_time_days: int | None = Field(default=None, ge=0)
     country: str | None = None
     currency: str | None = Field(default=None, min_length=3, max_length=3)
-    quote_status: Literal["raw", "parsed", "needs_review", "validated", "rejected", "expired"] | None = (
-        None
-    )
+    quote_status: (
+        Literal["raw", "parsed", "needs_review", "validated", "rejected", "expired"] | None
+    ) = None
     confidence: float | None = Field(default=None, ge=0, le=1)
     notes: str | None = None
     metadata: dict[str, Any] | None = None
@@ -111,3 +112,159 @@ class OutcomeCreate(BaseModel):
     outcome_score: float | None = Field(default=None, ge=-100, le=100)
     notes: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ValidationProjectCreate(BaseModel):
+    product_id: str
+    recommendation_snapshot_id: str | None = None
+    source_discovery_run_id: str | None = None
+    source_discovery_result_id: str | None = None
+    title: str | None = Field(default=None, max_length=255)
+    notes: str | None = None
+
+
+class ValidationProjectUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=2, max_length=255)
+    notes: str | None = None
+
+
+class ValidationTransitionCreate(BaseModel):
+    to_status: Literal[
+        "draft",
+        "marketplace_validation",
+        "sourcing",
+        "ready_for_decision",
+        "approved_for_sample",
+        "rejected",
+        "archived",
+    ]
+    reason: str = Field(min_length=2, max_length=2000)
+    actor: str = Field(default="local_user", min_length=2, max_length=120)
+
+
+class PoeEvidenceUpsert(BaseModel):
+    niche_name: str | None = None
+    reporting_period: str | None = None
+    search_volume: int | None = Field(default=None, ge=0)
+    search_volume_growth_percent: Decimal | None = Field(default=None, ge=-100, le=10000)
+    product_count: int | None = Field(default=None, ge=0)
+    average_price: Decimal | None = Field(default=None, ge=0)
+    average_review_count: Decimal | None = Field(default=None, ge=0)
+    conversion_rate_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    click_share_top_products_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    unmet_demand_notes: str | None = None
+    source_url: str | None = None
+    observed_at: datetime | None = None
+    notes: str | None = None
+
+
+class RfqUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=2, max_length=255)
+    product_specification: dict[str, Any] | None = None
+    requested_quantities: list[int] | None = None
+    destination: dict[str, Any] | None = None
+    required_certifications: list[str] | None = None
+    questions: list[str] | None = None
+    rendered_markdown: str | None = Field(default=None, min_length=2)
+
+
+class SupplierCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=255)
+    platform: Literal[
+        "alibaba",
+        "global_sources",
+        "made_in_china",
+        "importyeti",
+        "direct",
+        "sourcing_agent",
+        "other",
+    ] = "other"
+    profile_url: str | None = None
+    location: str | None = None
+    contact_name: str | None = None
+    contact_details: dict[str, Any] | None = None
+    verified_status: str | None = None
+    years_in_business: int | None = Field(default=None, ge=0)
+    notes: str | None = None
+
+
+class SupplierUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=255)
+    platform: (
+        Literal[
+            "alibaba",
+            "global_sources",
+            "made_in_china",
+            "importyeti",
+            "direct",
+            "sourcing_agent",
+            "other",
+        ]
+        | None
+    ) = None
+    profile_url: str | None = None
+    location: str | None = None
+    contact_name: str | None = None
+    contact_details: dict[str, Any] | None = None
+    verified_status: str | None = None
+    years_in_business: int | None = Field(default=None, ge=0)
+    notes: str | None = None
+
+
+class QuoteTierInput(BaseModel):
+    quantity: int = Field(ge=1)
+    unit_price: Decimal = Field(ge=0)
+    freight_total: Decimal | None = Field(default=None, ge=0)
+    duty_total: Decimal | None = Field(default=None, ge=0)
+    inspection_total: Decimal | None = Field(default=None, ge=0)
+    prep_total: Decimal | None = Field(default=None, ge=0)
+    miscellaneous_total: Decimal | None = Field(default=None, ge=0)
+
+
+class ValidationQuoteCreate(BaseModel):
+    supplier_id: str
+    rfq_id: str | None = None
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    incoterm: str | None = None
+    moq: int | None = Field(default=None, ge=1)
+    sample_cost: Decimal | None = Field(default=None, ge=0)
+    tooling_cost: Decimal | None = Field(default=None, ge=0)
+    packaging_cost_per_unit: Decimal | None = Field(default=None, ge=0)
+    labeling_cost_per_unit: Decimal | None = Field(default=None, ge=0)
+    production_lead_time_days: int | None = Field(default=None, ge=0)
+    sample_lead_time_days: int | None = Field(default=None, ge=0)
+    certification_notes: str | None = None
+    payment_terms: str | None = None
+    quote_valid_until: date | None = None
+    status: Literal[
+        "draft", "received", "clarification_needed", "shortlisted", "rejected", "expired"
+    ] = "draft"
+    notes: str | None = None
+    tiers: list[QuoteTierInput] = Field(default_factory=list)
+
+
+class ValidationQuoteUpdate(BaseModel):
+    rfq_id: str | None = None
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    incoterm: str | None = None
+    moq: int | None = Field(default=None, ge=1)
+    sample_cost: Decimal | None = Field(default=None, ge=0)
+    tooling_cost: Decimal | None = Field(default=None, ge=0)
+    packaging_cost_per_unit: Decimal | None = Field(default=None, ge=0)
+    labeling_cost_per_unit: Decimal | None = Field(default=None, ge=0)
+    production_lead_time_days: int | None = Field(default=None, ge=0)
+    sample_lead_time_days: int | None = Field(default=None, ge=0)
+    certification_notes: str | None = None
+    payment_terms: str | None = None
+    quote_valid_until: date | None = None
+    status: (
+        Literal["draft", "received", "clarification_needed", "shortlisted", "rejected", "expired"]
+        | None
+    ) = None
+    notes: str | None = None
+    tiers: list[QuoteTierInput] | None = None
+
+
+class GateOverrideCreate(BaseModel):
+    reason: str = Field(min_length=2, max_length=2000)
+    actor: str = Field(default="local_user", min_length=2, max_length=120)

@@ -1,7 +1,8 @@
 "use client";
 
 import clsx from "clsx";
-import { ExternalLink, Loader2, Play } from "lucide-react";
+import { useMutation } from "@tanstack/react-query";
+import { ClipboardCheck, ExternalLink, Loader2, Play } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
@@ -20,6 +21,7 @@ import {
   WarningList
 } from "@/components/validation/ValidationCard";
 import { currency, dateTime, percent, titleCase } from "@/lib/format";
+import { api } from "@/lib/api";
 import {
   useCreateRecommendationFeedback,
   useEvaluateConstraints,
@@ -35,6 +37,10 @@ export default function ProductDetailPage() {
   const updateComparable = useUpdateComparable(params.id);
   const feedback = useCreateRecommendationFeedback(params.id);
   const [feedbackReasons, setFeedbackReasons] = useState<string[]>([]);
+  const startValidation = useMutation({
+    mutationFn: () => api.startValidation(params.id),
+    onSuccess: (project) => { window.location.href = `/validations/${project.id}`; }
+  });
 
   if (product.isLoading) return <EmptyState label="Loading product detail" />;
   if (product.isError) return <EmptyState label={`Product detail unavailable: ${product.error.message}`} />;
@@ -67,6 +73,15 @@ export default function ProductDetailPage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => startValidation.mutate()}
+              disabled={!score || startValidation.isPending}
+              className="inline-flex h-9 items-center gap-2 border border-terminal-green/60 bg-terminal-green/10 px-3 text-sm text-terminal-green disabled:opacity-50"
+            >
+              {startValidation.isPending ? <Loader2 size={15} className="animate-spin" /> : <ClipboardCheck size={15} />}
+              Start validation
+            </button>
             <RecommendationBadge value={recommendation.recommendation ?? score?.recommendation} />
             <ScoreBadge value={recommendation.opportunity_score ?? score?.final_score} />
           </div>

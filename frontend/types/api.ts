@@ -16,6 +16,57 @@ export type OutcomeLabel =
   | "invalidated"
   | "insufficient_data";
 
+export type ValidationProject = {
+  id: string;
+  product_id: string;
+  product_name: string;
+  category: string | null;
+  status: string;
+  title: string;
+  notes: string | null;
+  latest_opportunity_score: number | null;
+  confidence_score: number | null;
+  max_landed_cost: number | null;
+  quote_count: number;
+  best_landed_cost: number | null;
+  decision_readiness: string;
+  created_at: string;
+  updated_at: string;
+  marketplace_packets?: ValidationMarketplacePacket[];
+  poe_evidence?: Record<string, unknown> | null;
+  rfqs?: ValidationRfq[];
+  quotes?: ValidationProjectQuote[];
+  gates?: Record<string, ValidationGate>;
+  audit_history?: Array<Record<string, unknown>>;
+};
+
+export type ValidationMarketplacePacket = {
+  id: string;
+  version: number;
+  scoring_version: string;
+  opportunity_score: number | null;
+  confidence_score: number | null;
+  readiness_score: number | null;
+  research_priority_score: number | null;
+  expected_sale_price: number | null;
+  amazon_fees_per_unit: number | null;
+  max_landed_cost: number | null;
+  effective_comparable_count: number;
+  comparable_asins: string[];
+  missing_evidence: string[];
+  conflicting_evidence: string[];
+  observed_at: string;
+};
+
+export type ValidationRfq = { id: string; version: number; title: string; rendered_markdown: string; created_at: string };
+export type ValidationGate = { gate_name: string; status: string; summary: string; missing_inputs: string[]; override_reason: string | null };
+export type ValidationProjectQuote = {
+  id: string; supplier: { id: string; name: string; platform: string }; status: string; moq: number | null;
+  sample_cost: number | null; production_lead_time_days: number | null; manual_estimate_warning: string;
+  tiers: Array<{ id: string; quantity: number; unit_price: number; economics: { landed_cost_per_unit: number; estimated_contribution_margin_percent: number | null; meets_cost_ceiling: boolean; calculation_status: string } }>;
+};
+export type SupplierRecord = { id: string; name: string; platform: string; location: string | null };
+
 export type ProductListItem = {
   id: string;
   canonical_name: string;
@@ -662,6 +713,7 @@ export type DiscoveryRunResult = {
   candidate_cluster_id: string;
   product_id: string;
   product_name: string;
+  score_snapshot_id: string | null;
   status: string;
   rank_position: number | null;
   opportunity_score: number | null;

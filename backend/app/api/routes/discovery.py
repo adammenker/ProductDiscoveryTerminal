@@ -174,6 +174,7 @@ def _result_response(
         candidate_cluster_id=str(result.candidate_cluster_id),
         product_id=product_id,
         product_name=product_names.get(product_id, "unknown product"),
+        score_snapshot_id=str(result.score_snapshot_id) if result.score_snapshot_id else None,
         status=result.status,
         rank_position=result.rank_position,
         opportunity_score=result.opportunity_score,

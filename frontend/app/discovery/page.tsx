@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Boxes,
   CheckCircle2,
+  ClipboardCheck,
   ExternalLink,
   Loader2,
   Play,
@@ -498,7 +499,7 @@ function RunDetailPanel({ run }: { run?: DiscoveryRun }) {
               </thead>
               <tbody>
                 {opportunityGroups.map(({ key, label, representative, members }) => (
-                  <OpportunityRows key={key} label={label} representative={representative} members={members} />
+                  <OpportunityRows key={key} runId={run.id} label={label} representative={representative} members={members} />
                 ))}
               </tbody>
             </table>
@@ -511,7 +512,8 @@ function RunDetailPanel({ run }: { run?: DiscoveryRun }) {
   );
 }
 
-function OpportunityRows({ label, representative, members }: {
+function OpportunityRows({ runId, label, representative, members }: {
+  runId: string;
   label: string;
   representative: DiscoveryRunResult;
   members: DiscoveryRunResult[];
@@ -530,9 +532,12 @@ function OpportunityRows({ label, representative, members }: {
         <td className="px-3 py-2"><RecommendationBadge value={representative.recommendation} /></td>
         <td className="px-3 py-2 font-mono text-xs uppercase text-terminal-muted">{titleCase(representative.status)}</td>
         <td className="px-3 py-2">
-          <Link href={`/products/${representative.product_id}`} className="inline-flex h-8 w-8 items-center justify-center border border-terminal-line text-terminal-muted hover:border-terminal-green hover:text-terminal-green" aria-label={`Open representative ${representative.product_name}`}>
-            <ExternalLink size={14} />
-          </Link>
+          <div className="flex gap-1">
+            <StartDiscoveryValidation runId={runId} result={representative} />
+            <Link href={`/products/${representative.product_id}`} className="inline-flex h-8 w-8 items-center justify-center border border-terminal-line text-terminal-muted hover:border-terminal-green hover:text-terminal-green" aria-label={`Open representative ${representative.product_name}`}>
+              <ExternalLink size={14} />
+            </Link>
+          </div>
         </td>
       </tr>
       {members.length > 1 ? (
@@ -557,6 +562,18 @@ function OpportunityRows({ label, representative, members }: {
       ) : null}
     </>
   );
+}
+
+function StartDiscoveryValidation({ runId, result }: { runId: string; result: DiscoveryRunResult }) {
+  const create = useMutation({
+    mutationFn: () => api.startValidation(result.product_id, {
+      recommendation_snapshot_id: result.score_snapshot_id,
+      source_discovery_run_id: runId,
+      source_discovery_result_id: result.id
+    }),
+    onSuccess: (project) => { window.location.href = `/validations/${project.id}`; }
+  });
+  return <button type="button" title="Start validation" disabled={create.isPending || !result.score_snapshot_id} onClick={() => create.mutate()} className="inline-flex h-8 w-8 items-center justify-center border border-terminal-line text-terminal-green disabled:opacity-40"><ClipboardCheck size={14} /></button>;
 }
 
 function groupOpportunityResults(results: DiscoveryRunResult[]) {

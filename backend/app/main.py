@@ -16,6 +16,7 @@ from app.api.routes import (
     products,
     security,
     validation,
+    validation_projects,
 )
 from app.core.config import get_settings
 from app.core.logging import configure_logging
@@ -55,4 +56,5 @@ app.include_router(ingestion.router)
 app.include_router(discovery.router)
 app.include_router(security.router)
 app.include_router(validation.router)
+app.include_router(validation_projects.router)
 app.include_router(backtests.router)

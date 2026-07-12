@@ -32,8 +32,17 @@ from app.models.validation import (
     OpportunitySnapshot,
     OutcomeMeasurement,
     PaperTrade,
+    ProductValidationProject,
     RuleProfile,
+    Supplier,
     SupplierQuote,
+    SupplierQuoteTier,
+    ValidationGateEvaluation,
+    ValidationMarketplacePacket,
+    ValidationPoeEvidence,
+    ValidationRfq,
+    ValidationSupplierQuote,
+    ValidationTransition,
 )
 
 __all__ = [
@@ -68,5 +77,14 @@ __all__ = [
     "SeedKeyword",
     "SeedList",
     "SupplierQuote",
+    "ProductValidationProject",
+    "Supplier",
+    "SupplierQuoteTier",
+    "ValidationGateEvaluation",
+    "ValidationMarketplacePacket",
+    "ValidationPoeEvidence",
+    "ValidationRfq",
+    "ValidationSupplierQuote",
+    "ValidationTransition",
     "SupplierSignal",
 ]

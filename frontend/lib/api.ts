@@ -27,6 +27,7 @@ import type {
   SnapshotResponse,
   SupplierQuote,
   SupplierQuoteInput
+  , ValidationProject, SupplierRecord
 } from "@/types/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -122,5 +123,18 @@ export const api = {
     fetchJson<DiscoveryRun[]>(`/discovery/runs?limit=${limit}&include_details=false`),
   discoveryRun: (id: string) => fetchJson<DiscoveryRun>(`/discovery/runs/${id}`),
   createDiscoveryRun: (input: DiscoveryRunInput) =>
-    post<DiscoveryRun>("/discovery/runs", input)
+    post<DiscoveryRun>("/discovery/runs", input),
+  validationProjects: (status?: string) => fetchJson<ValidationProject[]>(`/validation-projects${status ? `?status=${encodeURIComponent(status)}` : ""}`),
+  validationProject: (id: string) => fetchJson<ValidationProject>(`/validation-projects/${id}`),
+  startValidation: (productId: string, input: Record<string, unknown> = {}) => post<ValidationProject>("/validation-projects", { product_id: productId, ...input }),
+  transitionValidation: (id: string, to_status: string, reason: string) => post<ValidationProject>(`/validation-projects/${id}/transition`, { to_status, reason, actor: "local_user" }),
+  refreshValidationPacket: (id: string) => post(`/validation-projects/${id}/marketplace-packets/refresh`, {}),
+  savePoeEvidence: (id: string, input: Record<string, unknown>) => fetchJson(`/validation-projects/${id}/poe-evidence`, { method: "PUT", body: JSON.stringify(input) }),
+  generateRfq: (id: string) => post(`/validation-projects/${id}/rfqs/generate`, {}),
+  reviseRfq: (projectId: string, rfqId: string, input: Record<string, unknown>) => patch(`/validation-projects/${projectId}/rfqs/${rfqId}`, input),
+  suppliers: () => fetchJson<SupplierRecord[]>("/suppliers"),
+  createSupplier: (input: Record<string, unknown>) => post<SupplierRecord>("/suppliers", input),
+  createValidationQuote: (id: string, input: Record<string, unknown>) => post(`/validation-projects/${id}/quotes`, input),
+  evaluateValidationGates: (id: string) => post(`/validation-projects/${id}/gates/evaluate`, {}),
+  overrideValidationGate: (id: string, gate: string, reason: string) => post(`/validation-projects/${id}/gates/${gate}/override`, { reason, actor: "local_user" })
 };

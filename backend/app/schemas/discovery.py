@@ -69,6 +69,7 @@ class DiscoveryRunResultResponse(BaseModel):
     candidate_cluster_id: str
     product_id: str
     product_name: str
+    score_snapshot_id: str | None = None
     status: str
     rank_position: int | None = None
     opportunity_score: float | None = None

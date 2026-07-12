@@ -80,6 +80,14 @@ class Settings(BaseSettings):
     cost_ceiling_return_allowance_rate: float = 0.04
     cost_ceiling_ad_allowance_rate: float = 0.12
     cost_ceiling_target_profit_rate: float = 0.20
+    validation_min_effective_comparables: int = 3
+    validation_min_confidence: float = 60.0
+    validation_min_supplier_quotes: int = 3
+    validation_target_margin_percent: float = 30.0
+    validation_advertising_reserve_percent: float = 15.0
+    validation_returns_reserve_percent: float = 5.0
+    validation_other_variable_cost_per_unit: float = 0.0
+    validation_marketplace_max_age_days: int = 7
 
     model_config = SettingsConfigDict(
         env_file=".env",

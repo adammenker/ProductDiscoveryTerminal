@@ -39,6 +39,20 @@ Services:
 
 Open the frontend, type a product keyword in the dashboard search bar, and fetch real Amazon evidence through the SP-API research flow. Use `/discovery` for seed-list based scanner runs that can turn broad keywords into multiple candidate concepts, preliminarily rank them, enrich the top candidates with pricing/fees, and finalize rankings. Mock/sample plugins are still available for explicit development runs, but the default product research UI does not seed demo data.
 
+## Product Validation
+
+Use `/validations` to turn a ranked opportunity into a structured research project:
+
+```text
+ranked opportunity -> immutable marketplace packet -> manual POE evidence
+-> versioned RFQ -> supplier quotes and quantity tiers -> landed-cost comparison
+-> explicit decision gates -> reject or approve for sample
+```
+
+Start a validation from a discovery result or product detail page. The project freezes the exact recommendation snapshot and creates a versioned marketplace packet; later product rescoring does not rewrite that basis. Marketplace refreshes create new packet versions, RFQ edits create revisions, and every status transition is audited. Supplier research, freight, duty, inspection, and other sourcing estimates remain manual and must be verified before ordering.
+
+Validation does not approve purchases or guarantee product success. `Approve for sample` records a research decision only.
+
 ## Environment
 
 Copy the example environment file for local secrets:
@@ -140,6 +154,14 @@ DISCOVERY_MIN_CLUSTER_CONFIDENCE=0.60
 DISCOVERY_ENRICHMENT_REQUEST_INTERVAL_SECONDS=2.0
 DISCOVERY_ENRICH_MAX_PER_SOURCE_QUERY=3
 DISCOVERY_ENRICH_MAX_PER_OPPORTUNITY=1
+VALIDATION_MIN_EFFECTIVE_COMPARABLES=3
+VALIDATION_MIN_CONFIDENCE=60
+VALIDATION_MIN_SUPPLIER_QUOTES=3
+VALIDATION_TARGET_MARGIN_PERCENT=30
+VALIDATION_ADVERTISING_RESERVE_PERCENT=15
+VALIDATION_RETURNS_RESERVE_PERCENT=5
+VALIDATION_OTHER_VARIABLE_COST_PER_UNIT=0
+VALIDATION_MARKETPLACE_MAX_AGE_DAYS=7
 ```
 
 The sandbox endpoint defaults to `https://sandbox.sellingpartnerapi-na.amazon.com` for North America. Production defaults to `https://sellingpartnerapi-na.amazon.com` when `AMAZON_SP_API_ENV=production` and `AMAZON_SP_API_ENDPOINT` is not explicitly set. The backend also accepts the older names `AMAZON_SP_API_ENVIRONMENT` and `AMAZON_REFRESH_TOKEN` for compatibility.

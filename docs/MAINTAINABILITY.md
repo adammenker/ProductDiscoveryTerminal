@@ -10,6 +10,16 @@ Run `make check` before committing. It verifies migrations, backend tests, Pytho
 - Product list rows are materialized from the latest `OpportunityScore.score_breakdown`. Any workflow that changes supplier quotes, constraints, comparables, or evidence must create a new score.
 - Opportunity score, evidence confidence, validation readiness, and research priority are separate concepts. Do not multiply opportunity score by readiness.
 - Comparable snapshots retain metric-level observation timestamps. A catalog refresh must not make carried-forward pricing or fees appear fresh.
+- Validation marketplace packets and RFQs are immutable revisions. Create a new version instead of updating historical evidence or RFQ text in place.
+- Validation quote economics use `Decimal` inputs and must expose input provenance. Missing price or fee evidence produces an incomplete calculation, never a hidden fallback.
+- Validation project state is explicit and every manual transition is audited. Do not infer lifecycle state from quote or evidence presence.
+
+## Validation workflow
+
+- `ProductValidationService` owns lifecycle transitions, packet snapshots, RFQ revisions, quote economics, and decision gates. Keep business thresholds in typed settings, not route handlers.
+- The legacy product-level supplier quote API remains for compatibility. New validation work must use project suppliers, quotes, and quantity tiers.
+- Gate overrides require an actor and reason and are evidence, not score changes. POE evidence does not alter the global opportunity score.
+- GET routes are read-only. Live Amazon refreshes occur only through the marketplace packet refresh action.
 
 ## Discovery execution
 
