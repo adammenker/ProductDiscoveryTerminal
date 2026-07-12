@@ -464,23 +464,7 @@ class ValidationService:
         supplier = self.supplier_validation(product.id)
         constraints = self.latest_constraint(product.id)
         evidence = self.evidence_matrix(product.id)
-        economics_decision = economics.get("decision")
-        if not constraints["eligible"] or economics_decision in {
-            "quote_above_ceiling",
-            "invalid_negative_ceiling",
-        }:
-            decision = "skip"
-        elif (
-            supplier["viable_quote_count"]
-            and evidence["cross_source_confidence_score"] >= 70
-            and economics_decision == "quote_at_or_below_ceiling"
-            and economics.get("fee_source") != "configurable_defaults"
-        ):
-            decision = "pursue"
-        elif economics_decision == "needs_supplier_quote" or evidence["missing_evidence"]:
-            decision = "investigate"
-        else:
-            decision = "watch"
+        decision = validation_decision(economics, supplier, constraints, evidence)
         thesis = self._thesis(product, economics, supplier, constraints, evidence, decision)
         return {
             "decision": decision,
@@ -744,3 +728,27 @@ class ValidationService:
             f"{'eligible' if constraints['eligible'] else 'ineligible'} under "
             f"{constraints['rule_profile_name']}."
         )
+
+
+def validation_decision(
+    economics: dict[str, Any],
+    supplier: dict[str, Any],
+    constraints: dict[str, Any],
+    evidence: dict[str, Any],
+) -> str:
+    economics_decision = economics.get("decision")
+    if not constraints["eligible"] or economics_decision in {
+        "quote_above_ceiling",
+        "invalid_negative_ceiling",
+    }:
+        return "skip"
+    if (
+        supplier["viable_quote_count"]
+        and evidence["cross_source_confidence_score"] >= 70
+        and economics_decision == "quote_at_or_below_ceiling"
+        and economics.get("fee_source") != "configurable_defaults"
+    ):
+        return "pursue"
+    if economics_decision == "needs_supplier_quote" or evidence["missing_evidence"]:
+        return "investigate"
+    return "watch"

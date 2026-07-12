@@ -16,6 +16,20 @@ The default pipeline uses only manual/mock plugins. Real API plugins are opt-in 
 docker compose up --build
 ```
 
+Run the complete local quality gate before committing:
+
+```bash
+make check
+```
+
+Dependency audits are separate because they require registry access:
+
+```bash
+make audit
+```
+
+Repository invariants and known operational limits are documented in [docs/MAINTAINABILITY.md](docs/MAINTAINABILITY.md).
+
 Services:
 
 - Frontend: <http://localhost:3000>

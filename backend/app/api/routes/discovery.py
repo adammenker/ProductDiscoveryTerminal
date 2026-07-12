@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -61,9 +62,20 @@ def create_discovery_run(
 @router.get("/runs", response_model=list[DiscoveryRunResponse])
 def list_discovery_runs(
     limit: int = Query(25, ge=1, le=100),
+    include_details: bool = Query(False),
     db: Session = Depends(get_db),
 ) -> list[DiscoveryRunResponse]:
-    return [_run_response(db, run) for run in DiscoveryService(db).list_runs(limit=limit)]
+    runs = DiscoveryService(db).list_runs(limit=limit, include_details=include_details)
+    product_names = _product_names(db, runs) if include_details else {}
+    return [
+        _run_response(
+            db,
+            run,
+            include_details=include_details,
+            product_names=product_names,
+        )
+        for run in runs
+    ]
 
 
 @router.get("/runs/{run_id}", response_model=DiscoveryRunResponse)
@@ -97,11 +109,15 @@ def _seed_keyword_response(keyword: SeedKeyword) -> SeedKeywordResponse:
     )
 
 
-def _run_response(db: Session, run: DiscoveryRun) -> DiscoveryRunResponse:
-    product_names = {
-        str(product.id): product.canonical_name
-        for product in db.query(ProductCandidate).all()
-    }
+def _run_response(
+    db: Session,
+    run: DiscoveryRun,
+    *,
+    include_details: bool = True,
+    product_names: dict[str, str] | None = None,
+) -> DiscoveryRunResponse:
+    if product_names is None:
+        product_names = _product_names(db, [run]) if include_details else {}
     return DiscoveryRunResponse(
         id=str(run.id),
         seed_list_id=str(run.seed_list_id) if run.seed_list_id else None,
@@ -112,10 +128,26 @@ def _run_response(db: Session, run: DiscoveryRun) -> DiscoveryRunResponse:
         error_message=run.error_message,
         started_at=run.started_at,
         finished_at=run.finished_at,
-        clusters=[_cluster_response(row) for row in run.clusters],
-        results=[_result_response(row, product_names) for row in run.results],
-        origins=[_origin_response(row) for row in run.origins],
+        clusters=[_cluster_response(row) for row in run.clusters] if include_details else [],
+        results=(
+            [_result_response(row, product_names) for row in run.results]
+            if include_details
+            else []
+        ),
+        origins=[_origin_response(row) for row in run.origins] if include_details else [],
     )
+
+
+def _product_names(db: Session, runs: list[DiscoveryRun]) -> dict[str, str]:
+    product_ids = {result.product_id for run in runs for result in run.results}
+    if not product_ids:
+        return {}
+    return {
+        str(product.id): product.canonical_name
+        for product in db.scalars(
+            select(ProductCandidate).where(ProductCandidate.id.in_(product_ids))
+        )
+    }
 
 
 def _cluster_response(cluster: CandidateCluster) -> CandidateClusterResponse:

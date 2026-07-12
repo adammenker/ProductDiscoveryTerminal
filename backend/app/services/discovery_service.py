@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from difflib import SequenceMatcher
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_settings
 from app.models import (
@@ -107,22 +107,43 @@ class DiscoveryService:
         return seed_list
 
     def list_seed_lists(self) -> list[SeedList]:
-        return list(self.db.scalars(select(SeedList).order_by(SeedList.created_at.desc())))
-
-    def list_runs(self, limit: int = 25) -> list[DiscoveryRun]:
         return list(
             self.db.scalars(
-                select(DiscoveryRun)
-                .order_by(DiscoveryRun.started_at.desc())
-                .limit(max(1, min(limit, 100)))
+                select(SeedList)
+                .options(selectinload(SeedList.keywords))
+                .order_by(SeedList.created_at.desc())
             )
+        )
+
+    def list_runs(self, limit: int = 25, *, include_details: bool = False) -> list[DiscoveryRun]:
+        statement = (
+            select(DiscoveryRun)
+            .order_by(DiscoveryRun.started_at.desc())
+            .limit(max(1, min(limit, 100)))
+        )
+        if include_details:
+            statement = statement.options(
+                selectinload(DiscoveryRun.clusters),
+                selectinload(DiscoveryRun.results),
+                selectinload(DiscoveryRun.origins),
+            )
+        return list(
+            self.db.scalars(statement)
         )
 
     def get_seed_list(self, seed_list_id: uuid.UUID | str) -> SeedList | None:
         return self.db.get(SeedList, uuid.UUID(str(seed_list_id)))
 
     def get_run(self, run_id: uuid.UUID | str) -> DiscoveryRun | None:
-        return self.db.get(DiscoveryRun, uuid.UUID(str(run_id)))
+        return self.db.scalar(
+            select(DiscoveryRun)
+            .where(DiscoveryRun.id == uuid.UUID(str(run_id)))
+            .options(
+                selectinload(DiscoveryRun.clusters),
+                selectinload(DiscoveryRun.results),
+                selectinload(DiscoveryRun.origins),
+            )
+        )
 
     def run_discovery(
         self,
@@ -187,11 +208,26 @@ class DiscoveryService:
         plugin_overrides: list[IngestionPlugin] | None = None,
         refresh_pipeline_factory: Callable[[Session], AmazonRefreshPipeline] | None = None,
     ) -> DiscoveryRun:
-        run = self.get_run(run_id)
+        normalized_run_id = uuid.UUID(str(run_id))
+        run = self.db.scalar(
+            select(DiscoveryRun)
+            .where(DiscoveryRun.id == normalized_run_id)
+            .with_for_update()
+        )
         if run is None:
             raise ValueError(f"Discovery run not found: {run_id}")
-        if run.status not in {"queued", "running"}:
+        if run.status != "queued":
+            self.db.rollback()
             return run
+        run.status = "running"
+        run.summary = self._progress_summary(
+            stage="starting",
+            percent=max(1, int((run.summary or {}).get("progress_percent") or 0)),
+            message="Discovery worker claimed queued run",
+            extra=run.summary or {},
+        )
+        self.db.commit()
+        self.db.refresh(run)
         payload = DiscoveryRunCreate.model_validate(run.parameters)
         return self._process_run(
             run,
@@ -208,6 +244,7 @@ class DiscoveryService:
         plugin_overrides: list[IngestionPlugin] | None = None,
         refresh_pipeline_factory: Callable[[Session], AmazonRefreshPipeline] | None = None,
     ) -> DiscoveryRun:
+        run_id = run.id
         try:
             return self._process_run_unchecked(
                 run,
@@ -216,21 +253,25 @@ class DiscoveryService:
                 refresh_pipeline_factory=refresh_pipeline_factory,
             )
         except Exception as exc:
-            run.status = "failed"
-            run.finished_at = datetime.now(UTC)
-            run.error_message = str(exc)[:2000]
-            run.summary = self._progress_summary(
+            self.db.rollback()
+            failed_run = self.db.get(DiscoveryRun, run_id)
+            if failed_run is None:
+                raise
+            failed_run.status = "failed"
+            failed_run.finished_at = datetime.now(UTC)
+            failed_run.error_message = str(exc)[:2000]
+            failed_run.summary = self._progress_summary(
                 stage="failed",
                 percent=100,
                 message="Discovery run failed",
                 extra={
-                    **(run.summary or {}),
+                    **(failed_run.summary or {}),
                     "errors": [str(exc)],
                     "enrichment_state": "failed",
                 },
             )
             self.db.commit()
-            self.db.refresh(run)
+            self.db.refresh(failed_run)
             raise
 
     def _process_run_unchecked(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.orm import Session
 
 from app.models import ProductCandidate
@@ -111,3 +111,27 @@ def test_ingestion_products_opportunities_and_detail(client: TestClient) -> None
 
     runs = client.get("/plugin-runs").json()
     assert runs
+
+
+def test_product_list_uses_a_constant_query_budget(client: TestClient, db_session: Session) -> None:
+    response = client.post(
+        "/ingestion/run",
+        json={"plugins": ["manual_csv", "amazon_mock", "alibaba_mock"]},
+    )
+    assert response.status_code == 200
+    statement_count = 0
+
+    def count_statement(*args: object) -> None:
+        nonlocal statement_count
+        statement_count += 1
+
+    bind = db_session.get_bind()
+    event.listen(bind, "before_cursor_execute", count_statement)
+    try:
+        products = client.get("/products", params={"limit": 100})
+    finally:
+        event.remove(bind, "before_cursor_execute", count_statement)
+
+    assert products.status_code == 200
+    assert products.json()["total"] == 7
+    assert statement_count <= 3

@@ -13,7 +13,7 @@ import {
   Search
 } from "lucide-react";
 import Link from "next/link";
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
 import { RecommendationBadge } from "@/components/RecommendationBadge";
 import { api } from "@/lib/api";
@@ -34,10 +34,20 @@ export default function DiscoveryPage() {
   const runs = useQuery({
     queryKey: discoveryKeys.runs,
     queryFn: () => api.discoveryRuns(25),
-    refetchInterval: 3000
+    refetchInterval: (query) =>
+      query.state.data?.some((run) => isActiveRun(run)) ? 3000 : false
   });
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [lastCreatedRun, setLastCreatedRun] = useState<DiscoveryRun | null>(null);
+  const effectiveSelectedRunId =
+    selectedRunId ?? lastCreatedRun?.id ?? runs.data?.[0]?.id ?? null;
+  const selectedRunQuery = useQuery({
+    queryKey: ["discovery", "run", effectiveSelectedRunId],
+    queryFn: () => api.discoveryRun(effectiveSelectedRunId as string),
+    enabled: effectiveSelectedRunId !== null,
+    refetchInterval: (query) =>
+      query.state.data && isActiveRun(query.state.data) ? 3000 : false
+  });
 
   const createSeedList = useMutation({
     mutationFn: api.createSeedList,
@@ -50,6 +60,7 @@ export default function DiscoveryPage() {
     onSuccess: async (run) => {
       setLastCreatedRun(run);
       setSelectedRunId(run.id);
+      client.setQueryData(["discovery", "run", run.id], run);
       await Promise.all([
         client.invalidateQueries({ queryKey: discoveryKeys.runs }),
         client.invalidateQueries({ queryKey: ["products"] }),
@@ -57,13 +68,25 @@ export default function DiscoveryPage() {
       ]);
     }
   });
-  const selectedRun = useMemo(
-    () =>
-      runs.data?.find((run) => run.id === selectedRunId) ??
-      (lastCreatedRun?.id === selectedRunId ? lastCreatedRun : undefined) ??
-      runs.data?.[0],
-    [lastCreatedRun, runs.data, selectedRunId]
+  const selectedRun =
+    selectedRunQuery.data ??
+    (lastCreatedRun?.id === effectiveSelectedRunId ? lastCreatedRun : undefined);
+  const activeRunIds = useMemo(
+    () => new Set((runs.data ?? []).filter(isActiveRun).map((run) => run.id)),
+    [runs.data]
   );
+  const previousActiveRunIds = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const completed = [...previousActiveRunIds.current].some((id) => !activeRunIds.has(id));
+    previousActiveRunIds.current = activeRunIds;
+    if (completed) {
+      void Promise.all([
+        client.invalidateQueries({ queryKey: ["products"] }),
+        client.invalidateQueries({ queryKey: ["opportunities"] })
+      ]);
+    }
+  }, [activeRunIds, client]);
 
   return (
     <div className="space-y-6">
@@ -74,7 +97,10 @@ export default function DiscoveryPage() {
         </div>
         <button
           type="button"
-          onClick={() => runs.refetch()}
+          onClick={() => {
+            void runs.refetch();
+            void selectedRunQuery.refetch();
+          }}
           className="inline-flex h-10 items-center justify-center gap-2 border border-terminal-line bg-terminal-panel px-3 font-mono text-xs uppercase tracking-[0.12em] text-terminal-muted hover:border-terminal-green hover:text-terminal-green"
         >
           <RefreshCw size={14} />
@@ -99,16 +125,22 @@ export default function DiscoveryPage() {
           />
           <RunHistoryPanel
             runs={runs.data ?? []}
-            selectedRunId={selectedRun?.id}
+            selectedRunId={effectiveSelectedRunId ?? undefined}
             isLoading={runs.isLoading}
             onSelect={setSelectedRunId}
           />
         </div>
 
-        <RunDetailPanel run={selectedRun} />
+        <div className="min-w-0">
+          <RunDetailPanel run={selectedRun} />
+        </div>
       </div>
     </div>
   );
+}
+
+function isActiveRun(run: DiscoveryRun) {
+  return run.status === "queued" || run.status === "running";
 }
 
 function SeedListPanel({

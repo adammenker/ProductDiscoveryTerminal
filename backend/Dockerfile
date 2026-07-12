@@ -6,11 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e ".[dev]"
+RUN python -m pip install --no-cache-dir --upgrade pip==26.1.2 \
+    && python -m pip install --no-cache-dir -e ".[dev]"
 
 COPY . .
 
 EXPOSE 8000
 
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
-

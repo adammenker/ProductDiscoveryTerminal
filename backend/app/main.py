@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -17,12 +20,24 @@ from app.api.routes import (
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.security.runtime import validate_runtime_security
+from app.services.discovery_worker import recover_discovery_runs
 
 settings = get_settings()
 configure_logging(settings.log_level)
 validate_runtime_security(settings)
 
-app = FastAPI(title="Product Discovery Terminal", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
+    if (
+        settings.discovery_recover_on_startup
+        and not getattr(app_instance.state, "disable_discovery_recovery", False)
+    ):
+        recover_discovery_runs()
+    yield
+
+
+app = FastAPI(title="Product Discovery Terminal", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

@@ -51,7 +51,8 @@ class ProductService:
             stmt = stmt.where(func.lower(ProductCandidate.category) == category.lower())
         products = list(self.db.scalars(stmt).unique().all())
 
-        rows = [self._list_item(product) for product in products]
+        latest_scores = self._latest_scores({product.id for product in products})
+        rows = [self._list_item(product, latest_scores.get(product.id)) for product in products]
         if min_score is not None:
             rows = [row for row in rows if (row["latest_score"] or 0) >= min_score]
         if recommendation:
@@ -271,17 +272,33 @@ class ProductService:
             .limit(1)
         )
 
-    def _list_item(self, product: ProductCandidate) -> dict[str, Any]:
-        latest = self.latest_score(product.id)
-        latest_dict = self._score_to_dict(latest)
-        from app.services.validation_service import ValidationService
+    def _latest_scores(
+        self,
+        product_ids: set[uuid.UUID],
+    ) -> dict[uuid.UUID, OpportunityScore]:
+        if not product_ids:
+            return {}
+        scores = self.db.scalars(
+            select(OpportunityScore)
+            .where(OpportunityScore.product_id.in_(product_ids))
+            .order_by(
+                OpportunityScore.product_id,
+                OpportunityScore.created_at.desc(),
+                OpportunityScore.id.desc(),
+            )
+        )
+        latest: dict[uuid.UUID, OpportunityScore] = {}
+        for score in scores:
+            latest.setdefault(score.product_id, score)
+        return latest
 
-        validation = ValidationService(self.db)
-        economics = validation.economics(product.id)
-        supplier = validation.supplier_validation(product.id)
-        constraints = validation.latest_constraint(product.id)
-        evidence = validation.evidence_matrix(product.id)
-        decision = validation.decision(product.id)
+    def _list_item(
+        self,
+        product: ProductCandidate,
+        latest: OpportunityScore | None = None,
+    ) -> dict[str, Any]:
+        latest_dict = self._score_to_dict(latest)
+        validation = (latest_dict or {}).get("score_breakdown", {}).get("validation", {})
         return {
             "id": str(product.id),
             "canonical_name": product.canonical_name,
@@ -302,12 +319,12 @@ class ProductService:
             "risk_score": latest_dict["risk_score"] if latest_dict else None,
             "confidence_score": latest_dict["confidence_score"] if latest_dict else None,
             "explanation": latest_dict["explanation"] if latest_dict else None,
-            "economics_decision": economics.get("decision"),
-            "supplier_validation_decision": supplier.get("decision"),
-            "constraint_eligible": constraints.get("eligible"),
-            "cross_source_confidence_score": evidence.get("cross_source_confidence_score"),
-            "validation_decision": decision.get("decision"),
-            "missing_evidence": evidence.get("missing_evidence") or [],
+            "economics_decision": validation.get("economics_decision"),
+            "supplier_validation_decision": validation.get("supplier_validation_decision"),
+            "constraint_eligible": validation.get("constraint_eligible"),
+            "cross_source_confidence_score": validation.get("cross_source_confidence_score"),
+            "validation_decision": validation.get("validation_decision"),
+            "missing_evidence": validation.get("missing_evidence") or [],
             "updated_at": product.updated_at,
         }
 

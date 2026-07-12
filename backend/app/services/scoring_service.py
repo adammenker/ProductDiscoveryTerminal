@@ -12,7 +12,7 @@ from app.scoring.formulas import growth_score, pain_point_score
 from app.scoring.v2 import build_recommendation_v2
 from app.services.comparable_service import ComparableService
 from app.services.product_service import ProductService
-from app.services.validation_service import ValidationService
+from app.services.validation_service import ValidationService, validation_decision
 
 
 class ScoringService:
@@ -70,9 +70,16 @@ class ScoringService:
             "validation": {
                 "economics_decision": economics.get("decision"),
                 "supplier_validation_score": supplier_validation["supplier_validation_score"],
+                "supplier_validation_decision": supplier_validation["decision"],
                 "constraint_eligible": constraint_evaluation["eligible"],
                 "cross_source_confidence_score": evidence["cross_source_confidence_score"],
                 "missing_evidence": evidence["missing_evidence"],
+                "validation_decision": validation_decision(
+                    economics,
+                    supplier_validation,
+                    constraint_evaluation,
+                    evidence,
+                ),
             },
         }
         demand_proxy = _component_value(components, "demand_proxy")

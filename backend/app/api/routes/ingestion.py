@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -28,7 +28,7 @@ def run_ingestion(
 
 @router.post("/refresh-existing", response_model=PipelineRunResponse)
 def refresh_existing_products(
-    limit: int = 10,
+    limit: int = Query(10, ge=1, le=20),
     db: Session = Depends(get_db),
 ) -> PipelineRunResponse:
     return AmazonRefreshPipeline(db).run(limit=limit)

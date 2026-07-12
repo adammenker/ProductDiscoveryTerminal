@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     discovery_enrichment_request_interval_seconds: float = 2.0
     discovery_enrich_max_per_source_query: int = 3
     discovery_enrich_max_per_opportunity: int = 1
+    discovery_recover_on_startup: bool = True
     cost_ceiling_marketplace_fee_rate: float = 0.15
     cost_ceiling_fulfillment_fee_rate: float = 0.13
     cost_ceiling_fulfillment_fee_floor: float = 3.25

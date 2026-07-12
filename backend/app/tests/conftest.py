@@ -69,6 +69,8 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
+    app.state.disable_discovery_recovery = True
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+    app.state.disable_discovery_recovery = False

@@ -177,6 +177,26 @@ def test_discovery_run_can_be_queued_and_processed_later(db_session) -> None:  #
     assert processed.summary["results_created"] == 4
 
 
+def test_discovery_worker_does_not_process_an_already_claimed_run(db_session) -> None:  # type: ignore[no-untyped-def]
+    service = DiscoveryService(db_session)
+    queued = service.enqueue_discovery(
+        DiscoveryRunCreate(
+            keywords=[DiscoveryKeywordInput(keyword="travel organizer")],
+            limit_per_keyword=10,
+        )
+    )
+    queued.status = "running"
+    db_session.commit()
+
+    class UnexpectedPlugin(BroadCatalogFixturePlugin):
+        def fetch(self, query: IngestionQuery) -> list[RawObservationDTO]:
+            raise AssertionError("already-claimed run was executed twice")
+
+    result = service.process_queued_run(queued.id, plugin_overrides=[UnexpectedPlugin()])
+
+    assert result.status == "running"
+
+
 def test_failed_discovery_keyword_does_not_fail_entire_run(db_session) -> None:  # type: ignore[no-untyped-def]
     service = DiscoveryService(db_session)
     request = DiscoveryRunCreate(
@@ -195,6 +215,29 @@ def test_failed_discovery_keyword_does_not_fail_entire_run(db_session) -> None: 
     assert run.summary["keywords_failed"] == 1
     assert run.summary["results_created"] == 4
     assert any("broken keyword" in error for error in run.summary["errors"])
+
+
+def test_discovery_api_separates_run_summaries_from_details(db_session, client) -> None:  # type: ignore[no-untyped-def]
+    run = DiscoveryService(db_session).run_discovery(
+        DiscoveryRunCreate(
+            keywords=[DiscoveryKeywordInput(keyword="travel organizer")],
+            limit_per_keyword=10,
+        ),
+        plugin_overrides=[BroadCatalogFixturePlugin()],
+    )
+
+    summaries = client.get("/discovery/runs", params={"limit": 10})
+    detail = client.get(f"/discovery/runs/{run.id}")
+
+    assert summaries.status_code == 200
+    summary = next(item for item in summaries.json() if item["id"] == str(run.id))
+    assert summary["clusters"] == []
+    assert summary["results"] == []
+    assert summary["origins"] == []
+    assert detail.status_code == 200
+    assert len(detail.json()["clusters"]) == 4
+    assert len(detail.json()["results"]) == 4
+    assert len(detail.json()["origins"]) == 5
 
 
 def test_listing_variants_collapse_into_one_ranked_opportunity(db_session) -> None:  # type: ignore[no-untyped-def]

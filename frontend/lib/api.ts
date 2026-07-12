@@ -118,7 +118,8 @@ export const api = {
   seedLists: () => fetchJson<SeedList[]>("/discovery/seed-lists"),
   createSeedList: (input: SeedListInput) =>
     post<SeedList>("/discovery/seed-lists", input),
-  discoveryRuns: (limit = 25) => fetchJson<DiscoveryRun[]>(`/discovery/runs?limit=${limit}`),
+  discoveryRuns: (limit = 25) =>
+    fetchJson<DiscoveryRun[]>(`/discovery/runs?limit=${limit}&include_details=false`),
   discoveryRun: (id: string) => fetchJson<DiscoveryRun>(`/discovery/runs/${id}`),
   createDiscoveryRun: (input: DiscoveryRunInput) =>
     post<DiscoveryRun>("/discovery/runs", input)
